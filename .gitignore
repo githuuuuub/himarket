@@ -3,6 +3,9 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+### jqwik ###
+.jqwik-database
+
 ### IntelliJ IDEA ###
 .idea
 *.iws
@@ -31,10 +34,6 @@ build/
 ### VS Code ###
 .vscode/
 
-### AI Coding Assistants ###
-.cursor/
-.qoder/
-
 ### Mac OS ###
 .DS_Store
 
@@ -42,4 +41,17 @@ build/
 
 package-lock.json
 
+### Node modules ###
+node_modules/
+
 .clinerules/
+
+/workspace/
+/workspaces/
+
+### Local docs ###
+/docs/acp
+.app.pid
+
+### OpenSandbox (local clone, not committed) ###
+/OpenSandbox/
