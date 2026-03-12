@@ -15,50 +15,39 @@ import { ApiProductLinkApi } from '@/components/api-product/ApiProductLinkApi'
 import { ApiProductUsageGuide } from '@/components/api-product/ApiProductUsageGuide'
 import { ApiProductPortal } from '@/components/api-product/ApiProductPortal'
 import { ApiProductSkillPackage } from '@/components/api-product/ApiProductSkillPackage'
+import { ApiProductLinkNacos } from '@/components/api-product/ApiProductLinkNacos'
 // import { ApiProductDashboard } from '@/components/api-product/ApiProductDashboard'
 import { apiProductApi } from '@/lib/api';
 import type { ApiProduct, LinkedService } from '@/types/api-product';
 
 import ApiProductFormModal from '@/components/api-product/ApiProductFormModal';
 
-const getMenuItems = (productType?: string) => {
-  const baseItems = [
-    {
-      key: "overview",
-      label: "Overview",
-      description: "产品概览",
-      icon: EyeOutlined
-    },
-    {
-      key: "link-api",
-      label: productType === "MCP_SERVER" ? "MCP Config" : "Link API",
-      description: productType === "MCP_SERVER" ? "配置MCP" : "API关联",
-      icon: LinkOutlined
-    },
-    {
-      key: "usage-guide",
-      label: "Usage Guide",
-      description: "使用指南",
-      icon: BookOutlined
-    },
-    {
-      key: "portal",
-      label: "Portal",
-      description: "发布的门户",
-      icon: GlobalOutlined
-    },
-  ]
-
-  if (productType === 'AGENT_SKILL') {
-    return [
-      baseItems[0], // overview
-      { key: 'skill-package', label: 'Skill Package', description: '技能包管理', icon: InboxOutlined },
-      ...baseItems.slice(2), // usage-guide, portal（跳过 link-api）
-    ]
-  }
-
-  return baseItems
-}
+const BASE_MENU_ITEMS = [
+  {
+    key: "overview",
+    label: "Overview",
+    description: "产品概览",
+    icon: EyeOutlined
+  },
+  {
+    key: "link-api",
+    label: "Link API",
+    description: "API关联",
+    icon: LinkOutlined
+  },
+  {
+    key: "usage-guide",
+    label: "Usage Guide",
+    description: "使用指南",
+    icon: BookOutlined
+  },
+  {
+    key: "portal",
+    label: "Portal",
+    description: "发布的门户",
+    icon: GlobalOutlined
+  },
+]
 
 export default function ApiProductDetail() {
   const navigate = useNavigate()
@@ -67,12 +56,20 @@ export default function ApiProductDetail() {
   const [linkedService, setLinkedService] = useState<LinkedService | null>(null)
   const [, setLoading] = useState(true) // 添加 loading 状态
   
-  const menuItems = getMenuItems(apiProduct?.type)
+  // 动态计算 menuItems（AGENT_SKILL 类型：隐藏 Link API 和 Usage Guide，插入 Skill Package 和 Link Nacos）
+  const menuItems = apiProduct?.type === 'AGENT_SKILL'
+    ? [
+        BASE_MENU_ITEMS[0], // overview
+        { key: 'skill-package', label: 'Skill Package', description: '技能包管理', icon: InboxOutlined },
+        { key: 'link-nacos', label: 'Link Nacos', description: 'Nacos 关联', icon: LinkOutlined },
+        BASE_MENU_ITEMS[3], // portal（跳过 link-api 和 usage-guide）
+      ]
+    : BASE_MENU_ITEMS;
 
   // 从URL query参数获取当前tab，默认为overview
   const currentTab = searchParams.get('tab') || 'overview'
   // 验证tab值是否有效，如果无效则使用默认值
-  const validTab = getMenuItems(apiProduct?.type).some(item => item.key === currentTab) ? currentTab : 'overview'
+  const validTab = menuItems.some(item => item.key === currentTab) ? currentTab : 'overview'
   const [activeTab, setActiveTab] = useState(validTab)
 
   const [editModalVisible, setEditModalVisible] = useState(false)
@@ -147,7 +144,9 @@ export default function ApiProductDetail() {
       case "portal":
         return <ApiProductPortal apiProduct={apiProduct} />
       case "skill-package":
-        return <ApiProductSkillPackage productId={apiProduct.productId} onUploadSuccess={fetchApiProduct} />
+        return <ApiProductSkillPackage apiProduct={apiProduct} onUploadSuccess={fetchApiProduct} />
+      case "link-nacos":
+        return <ApiProductLinkNacos apiProduct={apiProduct} handleRefresh={fetchApiProduct} />
       // case "dashboard":
       //   return <ApiProductDashboard apiProduct={apiProduct} />
       default:
@@ -215,16 +214,20 @@ export default function ApiProductDetail() {
         {/* API Product 信息 */}
         <div className="p-4 border-b">
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-lg font-semibold">{apiProduct?.name || 'Loading...'}</h2>
+            {apiProduct ? (
+              <h2 className="text-lg font-semibold">{apiProduct.name}</h2>
+            ) : (
+              <div className="h-6 bg-gray-200 rounded animate-pulse w-32" />
+            )}
             <Dropdown menu={{ items: dropdownItems }} trigger={['click']}>
               <Button type="text" icon={<MoreOutlined />} />
             </Dropdown>
           </div>
         </div>
 
-        {/* 导航菜单 */}
+        {/* 导航菜单 - 等待产品数据加载后再渲染，避免菜单项闪烁 */}
         <nav className="flex-1 p-4 space-y-1">
-          {getMenuItems(apiProduct?.type).map((item) => {
+          {apiProduct ? menuItems.map((item) => {
             const Icon = item.icon;
             return (
               <button
@@ -243,7 +246,19 @@ export default function ApiProductDetail() {
                 </div>
               </button>
             );
-          })}
+          }) : (
+            <div className="space-y-2">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="flex items-center gap-3 px-3 py-2">
+                  <div className="w-4 h-4 rounded bg-gray-200 animate-pulse flex-shrink-0" />
+                  <div className="flex-1 space-y-1">
+                    <div className="h-4 bg-gray-200 rounded animate-pulse w-20" />
+                    <div className="h-3 bg-gray-100 rounded animate-pulse w-14" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </nav>
       </div>
 
