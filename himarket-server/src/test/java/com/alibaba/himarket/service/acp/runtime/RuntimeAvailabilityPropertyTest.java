@@ -40,7 +40,7 @@ class RuntimeAvailabilityPropertyTest {
             remoteConfig.setHost("");
         }
         props.setRemote(remoteConfig);
-        return new RuntimeSelector(props);
+        return new RuntimeSelector(props, null);
     }
 
     // ===== Property 7a: LOCAL 始终可用 =====

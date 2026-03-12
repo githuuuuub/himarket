@@ -1,5 +1,6 @@
 package com.alibaba.himarket.config;
 
+import com.alibaba.himarket.service.acp.runtime.RemoteSandboxProvider;
 import com.alibaba.himarket.service.acp.runtime.RuntimeSelector;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -11,7 +12,8 @@ import org.springframework.context.annotation.Configuration;
 public class RuntimeSelectorConfig {
 
     @Bean
-    public RuntimeSelector runtimeSelector(AcpProperties acpProperties) {
-        return new RuntimeSelector(acpProperties);
+    public RuntimeSelector runtimeSelector(
+            AcpProperties acpProperties, RemoteSandboxProvider remoteSandboxProvider) {
+        return new RuntimeSelector(acpProperties, remoteSandboxProvider);
     }
 }

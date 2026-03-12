@@ -102,6 +102,8 @@ public class ProductServiceImpl implements ProductService {
 
     private final ToolManager toolManager;
 
+    private final McpServerMetaRepository mcpServerMetaRepository;
+
     /**
      * Cache to prevent duplicate sync within interval (5 minutes default)
      */
@@ -359,6 +361,12 @@ public class ProductServiceImpl implements ProductService {
 
         productRepository.save(product);
         productRefRepository.save(productRef);
+
+        // MCP 产品：同步生成 mcp_server_meta 记录
+        if (product.getType() == ProductType.MCP_SERVER
+                && StrUtil.isNotBlank(productRef.getMcpConfig())) {
+            syncMcpMeta(product, productRef);
+        }
     }
 
     @Override
@@ -372,7 +380,11 @@ public class ProductServiceImpl implements ProductService {
     @Override
     public void deleteProductRef(String productId) {
         Product product = findProduct(productId);
-        product.setStatus(ProductStatus.PENDING);
+
+        // Published products cannot be unbound
+        if (publicationRepository.existsByProductId(productId)) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "API product already published");
+        }
 
         ProductRef productRef =
                 productRefRepository
@@ -383,12 +395,15 @@ public class ProductServiceImpl implements ProductService {
                                                 ErrorCode.INVALID_REQUEST,
                                                 "API product not linked to API"));
 
-        // Published products cannot be unbound
-        if (publicationRepository.existsByProductId(productId)) {
-            throw new BusinessException(ErrorCode.INVALID_REQUEST, "API product already published");
+        // MCP 产品：同步删除 mcp_server_meta 记录
+        if (product.getType() == ProductType.MCP_SERVER) {
+            mcpServerMetaRepository
+                    .findByProductId(productId)
+                    .forEach(mcpServerMetaRepository::delete);
         }
 
         productRefRepository.delete(productRef);
+        product.setStatus(ProductStatus.PENDING);
         productRepository.save(product);
         productSyncCache.invalidate(productId);
     }
@@ -644,6 +659,62 @@ public class ProductServiceImpl implements ProductService {
                             mcpConfig.setTools(tools);
                             productRef.setMcpConfig(JSONUtil.toJsonStr(mcpConfig));
                         });
+    }
+
+    /**
+     * 从 ProductRef 的 mcpConfig 中提取信息，同步到 mcp_server_meta 表。
+     * 网关/Nacos 导入 MCP 时调用。
+     */
+    private void syncMcpMeta(Product product, ProductRef productRef) {
+        try {
+            MCPConfigResult mcpConfig =
+                    JSONUtil.toBean(productRef.getMcpConfig(), MCPConfigResult.class);
+            if (mcpConfig == null || StrUtil.isBlank(mcpConfig.getMcpServerName())) {
+                return;
+            }
+
+            String mcpName = mcpConfig.getMcpServerName();
+            String productId = product.getProductId();
+
+            // 如果已存在同 productId + mcpName 的记录，更新；否则新建
+            McpServerMeta meta =
+                    mcpServerMetaRepository
+                            .findByProductIdAndMcpName(productId, mcpName)
+                            .orElse(null);
+
+            String sourceLabel = productRef.getSourceType().isGateway() ? "GATEWAY" : "NACOS";
+            String protocol =
+                    Optional.ofNullable(mcpConfig.getMeta())
+                            .map(MCPConfigResult.McpMetadata::getProtocol)
+                            .orElse("sse");
+
+            if (meta == null) {
+                meta =
+                        McpServerMeta.builder()
+                                .mcpServerId(IdGenerator.genMcpServerId())
+                                .productId(productId)
+                                .mcpName(mcpName)
+                                .displayName(product.getName())
+                                .description(product.getDescription())
+                                .origin(sourceLabel)
+                                .protocolType(protocol)
+                                .connectionConfig(productRef.getMcpConfig())
+                                .toolsConfig(mcpConfig.getTools())
+                                .visibility("PUBLIC")
+                                .publishStatus("DRAFT")
+                                .createdBy(contextHolder.getUser())
+                                .build();
+            } else {
+                meta.setOrigin(sourceLabel);
+                meta.setProtocolType(protocol);
+                meta.setConnectionConfig(productRef.getMcpConfig());
+                meta.setToolsConfig(mcpConfig.getTools());
+            }
+
+            mcpServerMetaRepository.save(meta);
+        } catch (Exception e) {
+            log.warn("同步 MCP meta 失败，productId={}: {}", product.getProductId(), e.getMessage());
+        }
     }
 
     /**

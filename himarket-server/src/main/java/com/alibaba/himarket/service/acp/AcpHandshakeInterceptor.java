@@ -60,6 +60,12 @@ public class AcpHandshakeInterceptor implements HandshakeInterceptor {
                 attributes.put("sandboxMode", sandboxMode);
             }
 
+            // Extract sandbox instance ID from query param: ?sandboxInstanceId=xxx
+            String sandboxInstanceId = params.getFirst("sandboxInstanceId");
+            if (StrUtil.isNotBlank(sandboxInstanceId)) {
+                attributes.put("sandboxInstanceId", sandboxInstanceId);
+            }
+
             // 解析 cliSessionConfig 参数
             String cliSessionConfigJson = params.getFirst("cliSessionConfig");
             if (StrUtil.isNotBlank(cliSessionConfigJson)) {

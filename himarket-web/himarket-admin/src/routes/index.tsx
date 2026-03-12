@@ -11,7 +11,7 @@ import ApiProductDetail from '@/pages/ApiProductDetail';
 import Login from '@/pages/Login';
 import ModelDashboard from '@/pages/ModelDashboard';
 import McpMonitor from '@/pages/McpMonitor';
-import K8sCluster from '@/pages/K8sCluster';
+import SandboxConsoles from '@/pages/SandboxConsoles';
 
 export const router = createBrowserRouter([
   {
@@ -63,6 +63,10 @@ export const router = createBrowserRouter([
         element: <NacosConsoles />,
       },
       {
+        path: 'consoles/sandbox',
+        element: <SandboxConsoles />,
+      },
+      {
         path: 'observability',
         element: <Navigate to="/observability/model-dashboard" replace />,
       },
@@ -74,10 +78,7 @@ export const router = createBrowserRouter([
         path: 'observability/mcp-monitor',
         element: <McpMonitor />,
       },
-      {
-        path: 'settings/k8s-cluster',
-        element: <K8sCluster />,
-      },
+
       {
         path: '*',
         element: <Navigate to="/portals" replace />,

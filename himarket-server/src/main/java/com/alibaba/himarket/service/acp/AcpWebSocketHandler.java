@@ -131,6 +131,9 @@ public class AcpWebSocketHandler extends TextWebSocketHandler {
         // Resolve sandboxMode from session attributes (set by AcpHandshakeInterceptor)
         String sandboxMode = (String) session.getAttributes().get("sandboxMode");
 
+        // Resolve sandboxInstanceId from session attributes (set by AcpHandshakeInterceptor)
+        String sandboxInstanceId = (String) session.getAttributes().get("sandboxInstanceId");
+
         // 注册连接
         connectionManager.registerConnection(session.getId(), userId, cwd, sandboxMode);
 
@@ -140,6 +143,7 @@ public class AcpWebSocketHandler extends TextWebSocketHandler {
             final RuntimeConfig fConfig = config;
             final CliProviderConfig fProviderConfig = providerConfig;
             final CliSessionConfig fSessionConfig = sessionConfig;
+            final String fSandboxInstanceId = sandboxInstanceId;
             podInitExecutor.submit(
                     () ->
                             doInitialize(
@@ -149,13 +153,19 @@ public class AcpWebSocketHandler extends TextWebSocketHandler {
                                     fConfig,
                                     fProviderConfig,
                                     fSessionConfig,
-                                    sandboxType));
+                                    sandboxType,
+                                    fSandboxInstanceId));
         } else {
             // 新客户端：等待 session/config 消息到达后再启动 pipeline
             connectionManager.setDeferredInit(
                     session.getId(),
                     new DeferredInitParams(
-                            userId, providerKey, config, providerConfig, sandboxType));
+                            userId,
+                            providerKey,
+                            config,
+                            providerConfig,
+                            sandboxType,
+                            sandboxInstanceId));
             logger.info(
                     "No cliSessionConfig in URL, deferring pipeline init until session/config"
                             + " message: session={}",
@@ -218,7 +228,8 @@ public class AcpWebSocketHandler extends TextWebSocketHandler {
                                     fDeferred.config(),
                                     fDeferred.providerConfig(),
                                     fSessionConfig,
-                                    fDeferred.sandboxType()));
+                                    fDeferred.sandboxType(),
+                                    fDeferred.sandboxInstanceId()));
 
             // 如果这条消息是 session/config，已处理完毕，不需要转发给 CLI
             if (sessionConfig != null) {
@@ -281,7 +292,8 @@ public class AcpWebSocketHandler extends TextWebSocketHandler {
             RuntimeConfig config,
             CliProviderConfig providerConfig,
             CliSessionConfig sessionConfig,
-            SandboxType sandboxType) {
+            SandboxType sandboxType,
+            String sandboxInstanceId) {
         try {
             logger.info(
                     "[Sandbox-Init] 开始异步沙箱初始化: userId={}, session={}, type={}",
@@ -302,6 +314,7 @@ public class AcpWebSocketHandler extends TextWebSocketHandler {
                             config,
                             sessionConfig,
                             sandboxType,
+                            sandboxInstanceId,
                             session);
 
             if (!session.isOpen()) {

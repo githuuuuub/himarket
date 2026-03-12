@@ -11,9 +11,12 @@ import java.util.List;
 public class RuntimeSelector {
 
     private final AcpProperties acpProperties;
+    private final RemoteSandboxProvider remoteSandboxProvider;
 
-    public RuntimeSelector(AcpProperties acpProperties) {
+    public RuntimeSelector(
+            AcpProperties acpProperties, RemoteSandboxProvider remoteSandboxProvider) {
         this.acpProperties = acpProperties;
+        this.remoteSandboxProvider = remoteSandboxProvider;
     }
 
     public List<RuntimeOption> getAvailableRuntimes(String providerKey) {
@@ -75,7 +78,10 @@ public class RuntimeSelector {
     public boolean isSandboxAvailable(SandboxType type) {
         return switch (type) {
             case LOCAL -> acpProperties.isLocalEnabled();
-            case REMOTE -> acpProperties.getRemote().isConfigured();
+            case REMOTE ->
+                    remoteSandboxProvider != null
+                            ? remoteSandboxProvider.isAvailable()
+                            : acpProperties.getRemote().isConfigured();
             case OPEN_SANDBOX -> false;
             case E2B -> false;
         };
@@ -114,7 +120,7 @@ public class RuntimeSelector {
     private String getUnavailableReason(SandboxType type) {
         return switch (type) {
             case LOCAL -> acpProperties.isLocalEnabled() ? null : "本地模式已被管理员禁用";
-            case REMOTE -> "远程沙箱未配置，请设置 acp.remote.host";
+            case REMOTE -> "远程沙箱未配置，请在管理后台导入 Sandbox 实例或设置 acp.remote.host";
             case OPEN_SANDBOX -> "OpenSandbox 沙箱尚未实现";
             case E2B -> "E2B 云沙箱尚未实现";
         };

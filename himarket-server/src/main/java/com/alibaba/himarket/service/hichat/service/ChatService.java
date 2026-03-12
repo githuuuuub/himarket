@@ -45,7 +45,6 @@ import com.alibaba.himarket.support.chat.attachment.ChatAttachmentConfig;
 import com.alibaba.himarket.support.chat.mcp.MCPTransportConfig;
 import com.alibaba.himarket.support.enums.ChatAttachmentType;
 import com.alibaba.himarket.support.enums.ChatStatus;
-import com.alibaba.himarket.support.enums.ProductType;
 import io.agentscope.core.message.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -77,6 +76,8 @@ public class ChatService {
     private final ProductService productService;
 
     private final ConsumerService consumerService;
+
+    private final McpServerService mcpServerService;
 
     public Flux<ChatEvent> chat(CreateChatParam param) {
         performAllChecks(param);
@@ -386,23 +387,20 @@ public class ChatService {
             return CollUtil.empty(List.class);
         }
 
-        return productService.getProducts(param.getMcpProducts()).values().stream()
-                .filter(
-                        product ->
-                                product.getType() == ProductType.MCP_SERVER
-                                        || product.getMcpConfig() != null)
-                .map(
-                        product -> {
-                            MCPTransportConfig transportConfig =
-                                    product.getMcpConfig().toTransportConfig();
+        String userId = contextHolder.getUser();
 
-                            // Add authentication credentials
-                            transportConfig.setHeaders(credentialContext.copyHeaders());
-                            transportConfig.setQueryParams(credentialContext.copyQueryParams());
+        // 统一从用户订阅的 endpoint 热数据解析 MCP 配置
+        List<MCPTransportConfig> configs =
+                mcpServerService.resolveTransportConfigs(param.getMcpProducts(), userId);
 
-                            return transportConfig;
-                        })
-                .collect(Collectors.toList());
+        // 补充认证信息
+        configs.forEach(
+                config -> {
+                    config.setHeaders(credentialContext.copyHeaders());
+                    config.setQueryParams(credentialContext.copyQueryParams());
+                });
+
+        return configs;
     }
 
     private LlmService getLlmService(InvokeModelParam param) {

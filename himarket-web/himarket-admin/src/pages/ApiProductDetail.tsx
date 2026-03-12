@@ -21,32 +21,44 @@ import type { ApiProduct, LinkedService } from '@/types/api-product';
 
 import ApiProductFormModal from '@/components/api-product/ApiProductFormModal';
 
-const BASE_MENU_ITEMS = [
-  {
-    key: "overview",
-    label: "Overview",
-    description: "产品概览",
-    icon: EyeOutlined
-  },
-  {
-    key: "link-api",
-    label: "Link API",
-    description: "API关联",
-    icon: LinkOutlined
-  },
-  {
-    key: "usage-guide",
-    label: "Usage Guide",
-    description: "使用指南",
-    icon: BookOutlined
-  },
-  {
-    key: "portal",
-    label: "Portal",
-    description: "发布的门户",
-    icon: GlobalOutlined
-  },
-]
+const getMenuItems = (productType?: string) => {
+  const baseItems = [
+    {
+      key: "overview",
+      label: "Overview",
+      description: "产品概览",
+      icon: EyeOutlined
+    },
+    {
+      key: "link-api",
+      label: productType === "MCP_SERVER" ? "MCP Config" : "Link API",
+      description: productType === "MCP_SERVER" ? "配置MCP" : "API关联",
+      icon: LinkOutlined
+    },
+    {
+      key: "usage-guide",
+      label: "Usage Guide",
+      description: "使用指南",
+      icon: BookOutlined
+    },
+    {
+      key: "portal",
+      label: "Portal",
+      description: "发布的门户",
+      icon: GlobalOutlined
+    },
+  ]
+
+  if (productType === 'AGENT_SKILL') {
+    return [
+      baseItems[0], // overview
+      { key: 'skill-package', label: 'Skill Package', description: '技能包管理', icon: InboxOutlined },
+      ...baseItems.slice(2), // usage-guide, portal（跳过 link-api）
+    ]
+  }
+
+  return baseItems
+}
 
 export default function ApiProductDetail() {
   const navigate = useNavigate()
@@ -55,19 +67,12 @@ export default function ApiProductDetail() {
   const [linkedService, setLinkedService] = useState<LinkedService | null>(null)
   const [, setLoading] = useState(true) // 添加 loading 状态
   
-  // 动态计算 menuItems（AGENT_SKILL 类型：隐藏 Link API，插入 Skill Package 到第二位）
-  const menuItems = apiProduct?.type === 'AGENT_SKILL'
-    ? [
-        BASE_MENU_ITEMS[0], // overview
-        { key: 'skill-package', label: 'Skill Package', description: '技能包管理', icon: InboxOutlined },
-        ...BASE_MENU_ITEMS.slice(2), // usage-guide, portal（跳过 link-api）
-      ]
-    : BASE_MENU_ITEMS;
+  const menuItems = getMenuItems(apiProduct?.type)
 
   // 从URL query参数获取当前tab，默认为overview
   const currentTab = searchParams.get('tab') || 'overview'
   // 验证tab值是否有效，如果无效则使用默认值
-  const validTab = menuItems.some(item => item.key === currentTab) ? currentTab : 'overview'
+  const validTab = getMenuItems(apiProduct?.type).some(item => item.key === currentTab) ? currentTab : 'overview'
   const [activeTab, setActiveTab] = useState(validTab)
 
   const [editModalVisible, setEditModalVisible] = useState(false)
@@ -219,7 +224,7 @@ export default function ApiProductDetail() {
 
         {/* 导航菜单 */}
         <nav className="flex-1 p-4 space-y-1">
-          {menuItems.map((item) => {
+          {getMenuItems(apiProduct?.type).map((item) => {
             const Icon = item.icon;
             return (
               <button

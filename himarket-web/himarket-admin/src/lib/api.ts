@@ -309,3 +309,95 @@ export const skillApi = {
       headers: { 'Content-Type': 'text/plain' },
     }),
 }
+
+// MCP Server 管理 API
+export const mcpServerApi = {
+  // 保存 MCP 元信息（创建/更新）
+  saveMeta: (data: {
+    productId: string
+    mcpName: string
+    displayName: string
+    description?: string
+    repoUrl?: string
+    sourceType?: string
+    origin?: string
+    gatewayId?: string
+    nacosId?: string
+    refConfig?: string
+    tags?: string
+    icon?: string
+    protocolType: string
+    connectionConfig: string
+    extraParams?: string
+    serviceIntro?: string
+    visibility?: string
+    publishStatus?: string
+    toolsConfig?: string
+  }) => {
+    return api.post(`/mcp-servers/meta`, data)
+  },
+  // 获取 MCP 元信息
+  getMeta: (mcpServerId: string) => {
+    return api.get(`/mcp-servers/meta/${mcpServerId}`)
+  },
+  // 获取产品下所有 MCP 元信息
+  listMetaByProduct: (productId: string) => {
+    return api.get(`/mcp-servers/meta`, { params: { productId } })
+  },
+  // 删除 MCP 元信息
+  deleteMeta: (mcpServerId: string) => {
+    return api.delete(`/mcp-servers/meta/${mcpServerId}`)
+  },
+  // 删除产品下所有 MCP 配置（meta + endpoint + ref + 重置状态）
+  deleteMetaByProduct: (productId: string) => {
+    return api.delete(`/mcp-servers/meta/by-product/${productId}`)
+  },
+  // 保存 endpoint
+  saveEndpoint: (data: {
+    mcpServerId: string
+    endpointUrl: string
+    hostingType: string
+    protocol: string
+    userId?: string
+    hostingInstanceId?: string
+    hostingIdentifier?: string
+  }) => {
+    return api.post(`/mcp-servers/endpoints`, data)
+  },
+  // 获取 endpoint 列表
+  listEndpoints: (mcpServerId: string) => {
+    return api.get(`/mcp-servers/endpoints`, { params: { mcpServerId } })
+  },
+  // 删除 endpoint
+  deleteEndpoint: (endpointId: string) => {
+    return api.delete(`/mcp-servers/endpoints/${endpointId}`)
+  },
+  // 市场列表
+  listPublished: (params?: { page?: number; size?: number }) => {
+    return api.get(`/mcp-servers/published`, { params })
+  },
+}
+
+// Sandbox 实例相关 API
+export const sandboxApi = {
+  // 获取沙箱实例列表
+  getSandboxes: (params?: { sandboxType?: string; page?: number; size?: number }) => {
+    return api.get(`/sandboxes`, { params })
+  },
+  // 导入沙箱实例
+  importSandbox: (data: { sandboxName: string; sandboxType: string; kubeConfig: string; namespace: string; description?: string }) => {
+    return api.post(`/sandboxes`, data)
+  },
+  // 更新沙箱实例
+  updateSandbox: (sandboxId: string, data: { sandboxName?: string; kubeConfig?: string; namespace?: string; description?: string }) => {
+    return api.put(`/sandboxes/${sandboxId}`, data)
+  },
+  // 删除沙箱实例
+  deleteSandbox: (sandboxId: string) => {
+    return api.delete(`/sandboxes/${sandboxId}`)
+  },
+  // 获取集群信息
+  fetchClusterInfo: (kubeConfig: string) => {
+    return api.post(`/sandboxes/cluster-info`, { kubeConfig })
+  },
+}

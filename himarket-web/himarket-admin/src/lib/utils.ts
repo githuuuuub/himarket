@@ -28,7 +28,13 @@ export const getStatusBadgeVariant = (status: string) => {
 export const getServiceName = (linkedServiceParam: any) => {  
   
   if (linkedServiceParam?.sourceType === 'NACOS') {
-    return linkedServiceParam.nacosRefConfig?.mcpServerName||'Nacos MCP服务'
+    if (linkedServiceParam.nacosRefConfig?.mcpServerName) {
+      return linkedServiceParam.nacosRefConfig.mcpServerName
+    }
+    if (linkedServiceParam.nacosRefConfig?.agentName) {
+      return linkedServiceParam.nacosRefConfig.agentName
+    }
+    return 'Nacos服务'
   }    
   if (linkedServiceParam?.apigRefConfig) {
     if ('apiName' in linkedServiceParam.apigRefConfig && linkedServiceParam.apigRefConfig.apiName) {
@@ -45,12 +51,27 @@ export const getServiceName = (linkedServiceParam: any) => {
     }
   }
   if (linkedServiceParam?.higressRefConfig) {
-    return linkedServiceParam.higressRefConfig.mcpServerName
+    if (linkedServiceParam.higressRefConfig.mcpServerName) {
+      return linkedServiceParam.higressRefConfig.mcpServerName
+    }
+    if (linkedServiceParam.higressRefConfig.modelRouteName) {
+      return linkedServiceParam.higressRefConfig.modelRouteName
+    }
   }
   if (linkedServiceParam?.adpAIGatewayRefConfig) {
-    // ADP_AI_GATEWAY 只支持 MCP Server，不支持 Agent API
     if ('mcpServerName' in linkedServiceParam.adpAIGatewayRefConfig && linkedServiceParam.adpAIGatewayRefConfig.mcpServerName) {
       return linkedServiceParam.adpAIGatewayRefConfig.mcpServerName
+    }
+    if ('modelApiName' in linkedServiceParam.adpAIGatewayRefConfig && linkedServiceParam.adpAIGatewayRefConfig.modelApiName) {
+      return linkedServiceParam.adpAIGatewayRefConfig.modelApiName
+    }
+  }
+  if (linkedServiceParam?.apsaraGatewayRefConfig) {
+    if ('mcpServerName' in linkedServiceParam.apsaraGatewayRefConfig && linkedServiceParam.apsaraGatewayRefConfig.mcpServerName) {
+      return linkedServiceParam.apsaraGatewayRefConfig.mcpServerName
+    }
+    if ('modelApiName' in linkedServiceParam.apsaraGatewayRefConfig && linkedServiceParam.apsaraGatewayRefConfig.modelApiName) {
+      return linkedServiceParam.apsaraGatewayRefConfig.modelApiName
     }
   }
   return '未知服务'

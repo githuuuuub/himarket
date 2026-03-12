@@ -6,7 +6,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * K8s 集群配置属性。
  * <p>
  * 当前仅提供 enabled 标志位，用于 RuntimeSelector 判断 K8s 运行时是否可用。
- * 后续 K8sConfigService 实现后，将扩展为完整的集群配置管理。
  */
 @ConfigurationProperties(prefix = "acp.k8s")
 public class K8sProperties {

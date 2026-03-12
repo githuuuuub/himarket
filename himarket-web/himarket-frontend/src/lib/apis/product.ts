@@ -74,6 +74,34 @@ export function getProduct(params: { id: string }) {
   return request.get<RespI<IProductDetail>, RespI<IProductDetail>>('/products/' + params.id)
 }
 
+// MCP 元信息类型
+export interface IMcpMeta {
+  mcpServerId: string;
+  productId: string;
+  displayName: string;
+  mcpName: string;
+  description: string;
+  repoUrl: string;
+  sourceType: string;
+  origin: string;
+  tags: string;
+  icon: string;
+  protocolType: string;
+  connectionConfig: string;
+  extraParams: string;
+  serviceIntro: string;
+  visibility: string;
+  publishStatus: string;
+  toolsConfig: string;
+  createdBy: string;
+  createAt: string;
+}
+
+// 获取产品关联的 MCP 元信息
+export function getProductMcpMeta(productId: string) {
+  return request.get<RespI<IMcpMeta[]>, RespI<IMcpMeta[]>>(`/products/${productId}/mcp-meta`);
+}
+
 // MCP 工具列表相关类型
 export interface IMcpTool {
   name: string;
@@ -178,4 +206,103 @@ export function getMcpTools(params: { productId: string }) {
   return request.get<RespI<IMcpToolsListResp>, RespI<IMcpToolsListResp>>(
     `/products/${params.productId}/tools`
   );
+}
+
+// ==================== 沙箱相关 ====================
+
+export interface ISandboxInstance {
+  sandboxId: string;
+  sandboxName: string;
+  sandboxType: string;
+  apiServer: string;
+  namespace: string;
+  description: string;
+  status: string;
+  createAt: string;
+}
+
+interface GetSandboxesResp {
+  content: ISandboxInstance[];
+  number: number;
+  size: number;
+  totalElements: number;
+}
+
+// 沙箱简要信息（Portal 端，只有 id 和名称）
+export interface ISandboxSimple {
+  sandboxId: string;
+  sandboxName: string;
+}
+
+// 获取可用沙箱列表（Portal 端，只返回 id 和名称）
+export function getActiveSandboxes() {
+  return request.get<RespI<ISandboxSimple[]>, RespI<ISandboxSimple[]>>('/mcp-servers/sandboxes');
+}
+
+// 获取可用沙箱列表（Admin 端，按 adminId 过滤）
+export function getSandboxes(params?: { sandboxType?: string; page?: number; size?: number }) {
+  return request.get<RespI<GetSandboxesResp>, RespI<GetSandboxesResp>>('/sandboxes', { params });
+}
+
+// ==================== MCP 订阅 ====================
+
+// 订阅 MCP Server（统一入口：直连 / 沙箱场景）
+// 沙箱场景后端需要部署 CRD 并轮询 Endpoint，可能耗时较长，超时设为 120 秒
+export function subscribeMcp(productId: string, data?: { sandboxId?: string; transportType?: string; authType?: string; params?: string }) {
+  return request.post<RespI<IMyEndpoint>, RespI<IMyEndpoint>>(`/mcp-servers/${productId}/subscribe`, data || {}, {
+    timeout: 120_000,
+  });
+}
+
+// ==================== 我的 MCP（热数据） ====================
+
+export interface IMyEndpoint {
+  endpointId: string;
+  mcpServerId: string;
+  endpointUrl: string;
+  hostingType: string;
+  protocol: string;
+  hostingInstanceId: string;
+  subscribeParams: string;
+  status: string;
+  endpointCreatedAt: string;
+  // meta 展示字段
+  productId: string;
+  displayName: string;
+  mcpName: string;
+  description: string;
+  icon: string;
+  tags: string;
+  protocolType: string;
+  origin: string;
+  toolsConfig: string;
+}
+
+// 获取当前用户的 MCP endpoint 列表
+export function getMyEndpoints() {
+  return request.get<RespI<IMyEndpoint[]>, RespI<IMyEndpoint[]>>('/mcp-servers/my-endpoints');
+}
+
+// 取消订阅 MCP Server
+export function unsubscribeMcp(endpointId: string) {
+  return request.delete<RespI<void>, RespI<void>>(`/mcp-servers/subscriptions/${endpointId}`);
+}
+
+// ==================== 用户注册 MCP ====================
+
+export interface IRegisterMcpParam {
+  mcpName: string;
+  displayName: string;
+  description?: string;
+  repoUrl?: string;
+  tags?: string;
+  icon?: string;
+  protocolType: string;
+  connectionConfig: string;
+  extraParams?: string;
+  serviceIntro?: string;
+}
+
+export function registerMcp(data: IRegisterMcpParam) {
+  return request.post<RespI<IMcpMeta>, RespI<IMcpMeta>>('/mcp-servers/register', data);
 }

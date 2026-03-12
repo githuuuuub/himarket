@@ -1,6 +1,8 @@
 package com.alibaba.himarket.service.acp.runtime;
 
 import com.alibaba.himarket.config.AcpProperties;
+import com.alibaba.himarket.entity.SandboxInstance;
+import com.alibaba.himarket.repository.SandboxInstanceRepository;
 import java.io.IOException;
 import java.net.URI;
 import java.util.Map;
@@ -11,13 +13,12 @@ import org.springframework.stereotype.Component;
 /**
  * 远程沙箱提供者。
  *
- * <p>连接远程 Sidecar 服务，不依赖 K8s API。 Sidecar 可以部署在 K8s Pod、Docker 容器或裸机上，只要地址可达即可。
+ * <p>优先从数据库（SandboxInstance）获取连接信息，fallback 到 application.yml 静态配置。
+ * Sidecar 可以部署在 K8s Pod、Docker 容器或裸机上，只要地址可达即可。
  * 所有用户共用同一个 Sidecar，通过 {@code /workspace/{userId}} 实现工作目录隔离。
  *
  * <p>文件操作使用绝对路径（参考 OpenSandbox execd 设计），由本 Provider 负责将相对路径
  * 转换为基于 {@code workspacePath} 的绝对路径，Sidecar 端不再需要知道用户上下文。
- *
- * <p>文件操作委托给 {@link SandboxHttpClient}，WebSocket 连接复用 {@link RemoteRuntimeAdapter}。
  */
 @Component
 public class RemoteSandboxProvider implements SandboxProvider {
@@ -26,10 +27,15 @@ public class RemoteSandboxProvider implements SandboxProvider {
 
     private final SandboxHttpClient sandboxHttpClient;
     private final AcpProperties acpProperties;
+    private final SandboxInstanceRepository sandboxInstanceRepository;
 
-    public RemoteSandboxProvider(SandboxHttpClient sandboxHttpClient, AcpProperties acpProperties) {
+    public RemoteSandboxProvider(
+            SandboxHttpClient sandboxHttpClient,
+            AcpProperties acpProperties,
+            SandboxInstanceRepository sandboxInstanceRepository) {
         this.sandboxHttpClient = sandboxHttpClient;
         this.acpProperties = acpProperties;
+        this.sandboxInstanceRepository = sandboxInstanceRepository;
     }
 
     @Override
@@ -47,9 +53,34 @@ public class RemoteSandboxProvider implements SandboxProvider {
             throw new IllegalArgumentException("userId 包含非法字符: " + userId);
         }
 
-        AcpProperties.RemoteConfig remoteConfig = acpProperties.getRemote();
-        String host = remoteConfig.getHost();
-        int port = remoteConfig.getPort();
+        String host;
+        int port;
+
+        // 优先从数据库获取 SandboxInstance 连接信息
+        if (config.sandboxInstanceId() != null && !config.sandboxInstanceId().isBlank()) {
+            SandboxInstance instance =
+                    sandboxInstanceRepository
+                            .findBySandboxId(config.sandboxInstanceId())
+                            .orElseThrow(
+                                    () ->
+                                            new IllegalArgumentException(
+                                                    "Sandbox 实例不存在: "
+                                                            + config.sandboxInstanceId()));
+            host = extractHost(instance.getApiServer());
+            port = extractPort(instance.getApiServer());
+            logger.info(
+                    "[RemoteSandboxProvider] acquire from DB instance: sandboxId={}, host={}:{}",
+                    config.sandboxInstanceId(),
+                    host,
+                    port);
+        } else {
+            // Fallback 到静态配置
+            AcpProperties.RemoteConfig remoteConfig = acpProperties.getRemote();
+            host = remoteConfig.getHost();
+            port = remoteConfig.getPort();
+            logger.info(
+                    "[RemoteSandboxProvider] acquire from static config: host={}:{}", host, port);
+        }
 
         String workspacePath = "/workspace/" + userId;
 
@@ -74,12 +105,6 @@ public class RemoteSandboxProvider implements SandboxProvider {
         return sandboxHttpClient.healthCheckWithLog(sidecarBaseUrl(info), info.sandboxId());
     }
 
-    /**
-     * 写入文件到沙箱。将相对路径转换为基于 workspacePath 的绝对路径。
-     *
-     * <p>例如：relativePath=".qwen/settings.json", workspacePath="/workspace/dev-xxx"
-     * → 实际写入 "/workspace/dev-xxx/.qwen/settings.json"
-     */
     @Override
     public void writeFile(SandboxInfo info, String relativePath, String content)
             throws IOException {
@@ -87,19 +112,12 @@ public class RemoteSandboxProvider implements SandboxProvider {
         sandboxHttpClient.writeFile(sidecarBaseUrl(info), info.sandboxId(), absolutePath, content);
     }
 
-    /**
-     * 从沙箱读取文件。将相对路径转换为基于 workspacePath 的绝对路径。
-     */
     @Override
     public String readFile(SandboxInfo info, String relativePath) throws IOException {
         String absolutePath = toAbsolutePath(info, relativePath);
         return sandboxHttpClient.readFile(sidecarBaseUrl(info), info.sandboxId(), absolutePath);
     }
 
-    /**
-     * 解压 tar.gz 归档到沙箱。指定 workspacePath 作为解压目标目录，
-     * 确保配置文件解压到用户隔离的工作目录下。
-     */
     @Override
     public int extractArchive(SandboxInfo info, byte[] tarGzBytes) throws IOException {
         return sandboxHttpClient.extractArchive(
@@ -121,27 +139,50 @@ public class RemoteSandboxProvider implements SandboxProvider {
         return adapter;
     }
 
+    /**
+     * 判断是否有可用的远程沙箱（数据库中有 ACTIVE 实例 或 静态配置已设置）。
+     */
+    public boolean isAvailable() {
+        if (acpProperties.getRemote().isConfigured()) {
+            return true;
+        }
+        return sandboxInstanceRepository.countByStatus("RUNNING") > 0;
+    }
+
     private String sidecarBaseUrl(SandboxInfo info) {
         return "http://" + info.host() + ":" + info.sidecarPort();
     }
 
     /**
-     * 将相对路径转换为基于 workspacePath 的绝对路径。
-     *
-     * <p>参考 OpenSandbox execd 设计：文件操作使用绝对路径，由调用方负责构建。
-     * Sidecar 端不再依赖 WORKSPACE_ROOT 做路径解析。
+     * 从 apiServer URL 提取 host。
+     * 例如 "https://47.243.156.37:6443/" → "47.243.156.37"
      */
+    private String extractHost(String apiServer) {
+        if (apiServer == null) {
+            throw new IllegalArgumentException("apiServer 不能为空");
+        }
+        String cleaned = apiServer.replaceFirst("^https?://", "").replaceFirst("/+$", "");
+        int colonIdx = cleaned.lastIndexOf(':');
+        return colonIdx > 0 ? cleaned.substring(0, colonIdx) : cleaned;
+    }
+
+    /**
+     * 从 apiServer URL 提取端口，默认 8080（Sidecar 端口）。
+     */
+    private int extractPort(String apiServer) {
+        // Sidecar 端口固定 8080，apiServer 的端口是 K8s API 端口，不是 Sidecar 端口
+        return 8080;
+    }
+
     private String toAbsolutePath(SandboxInfo info, String relativePath) {
         String wp = info.workspacePath();
         if (wp == null || wp.isEmpty()) {
             return relativePath;
         }
-        // 去掉 relativePath 开头的 ./ 或 /
         String cleaned = relativePath;
         if (cleaned.startsWith("./")) {
             cleaned = cleaned.substring(2);
         } else if (cleaned.startsWith("/")) {
-            // 已经是绝对路径，直接返回
             return cleaned;
         }
         return wp.endsWith("/") ? wp + cleaned : wp + "/" + cleaned;

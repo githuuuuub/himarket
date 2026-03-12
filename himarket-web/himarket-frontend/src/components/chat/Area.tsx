@@ -65,6 +65,7 @@ export function ChatArea(props: ChatAreaProps) {
   const [addedMcps, setAddedMcps] = useState<IProductDetail[]>([]);
   const addedMcpsRef = useRef<IProductDetail[]>([]);
   const [mcpSubscripts, setMcpSubscripts] = useState<ISubscription[]>([]);
+  const [mcpEndpointProductIds, setMcpEndpointProductIds] = useState<Set<string>>(new Set());
   const [modelSubscriptions, setModelSubscriptions] = useState<ISubscription[]>([]);
   const [mcpEnabled, setMcpEnabled] = useState(() => {
     return safeJSONParse(window.localStorage.getItem("mcpEnabled") || "false", false)
@@ -232,6 +233,14 @@ export function ChatArea(props: ChatAreaProps) {
             ));
           })
       })
+    // 加载用户的 MCP endpoint（与"我的MCP"一致）
+    APIs.getMyEndpoints()
+      .then(({ data }) => {
+        if (data) {
+          setMcpEndpointProductIds(new Set(data.filter(ep => ep.productId).map(ep => ep.productId)));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   return (
@@ -469,6 +478,7 @@ export function ChatArea(props: ChatAreaProps) {
         mcpLoading={mcpListLoading}
         added={addedMcps}
         subscripts={mcpSubscripts}
+        subscribedProductIds={mcpEndpointProductIds}
         onAdd={handleAddMcp}
         onEnabled={handleMcpEnable}
         enabled={mcpEnabled}

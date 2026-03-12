@@ -1,13 +1,14 @@
 import { Card, Button, Modal, Form, Select, message, Collapse, Tabs, Row, Col } from 'antd'
-import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined, CopyOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined, CopyOutlined, CloudUploadOutlined, SettingOutlined, RocketOutlined } from '@ant-design/icons'
 import { useState, useEffect } from 'react'
 import type { ApiProduct, LinkedService, RestAPIItem, NacosMCPItem, APIGAIMCPItem, AIGatewayAgentItem, AIGatewayModelItem, ApiItem, AdpAIGatewayModelItem, ApsaraGatewayModelItem } from '@/types/api-product'
 import type { Gateway, NacosInstance } from '@/types/gateway'
-import { apiProductApi, gatewayApi, nacosApi } from '@/lib/api'
+import { apiProductApi, gatewayApi, nacosApi, mcpServerApi } from '@/lib/api'
 import { getGatewayTypeLabel } from '@/lib/constant'
 import { copyToClipboard, formatDomainWithPort } from '@/lib/utils'
 import * as yaml from 'js-yaml'
 import { SwaggerUIWrapper } from './SwaggerUIWrapper'
+import { McpCustomConfigModal } from './McpCustomConfigModal'
 
 interface ApiProductLinkApiProps {
   apiProduct: ApiProduct
@@ -19,6 +20,8 @@ interface ApiProductLinkApiProps {
 export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUpdate, handleRefresh }: ApiProductLinkApiProps) {
   // 移除了内部的 linkedService 状态，现在从 props 接收
   const [isModalVisible, setIsModalVisible] = useState(false)
+  const [isCustomConfigModalVisible, setIsCustomConfigModalVisible] = useState(false)
+  const [isAgentRuntimeModalVisible, setIsAgentRuntimeModalVisible] = useState(false)
   const [form] = Form.useForm()
   const [gateways, setGateways] = useState<Gateway[]>([])
   const [nacosInstances, setNacosInstances] = useState<NacosInstance[]>([])
@@ -50,10 +53,14 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
   const [selectedDomainIndex, setSelectedDomainIndex] = useState<number>(0)
   const [selectedAgentDomainIndex, setSelectedAgentDomainIndex] = useState<number>(0)
   const [selectedModelDomainIndex, setSelectedModelDomainIndex] = useState<number>(0)
+  const [mcpMetaList, setMcpMetaList] = useState<any[]>([])
 
   useEffect(() => {
     fetchGateways()
     fetchNacosInstances()
+    if (apiProduct.type === 'MCP_SERVER') {
+      fetchMcpMeta()
+    }
   }, [])
 
   // 解析MCP tools配置
@@ -311,6 +318,15 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
     }
   }
 
+  const fetchMcpMeta = async () => {
+    try {
+      const res = await mcpServerApi.listMetaByProduct(apiProduct.productId)
+      setMcpMetaList(res.data || [])
+    } catch {
+      setMcpMetaList([])
+    }
+  }
+
   const handleSourceTypeChange = (value: 'GATEWAY' | 'NACOS') => {
     setSourceType(value)
     setSelectedGateway(null)
@@ -555,13 +571,11 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
   }
 
 
-  // TODO
   const handleModalOk = () => {
-    form.validateFields().then((values) => {
+    form.validateFields().then(async (values) => {
       const { sourceType, gatewayId, nacosId, apiId } = values
       const selectedApi = apiList.find((item: any) => {
         if ('apiId' in item) {
-          // REST API或MCP server 会返回apiId和mcpRouteId，此时mcpRouteId为唯一值，apiId不是
           if ('mcpRouteId' in item) {
             return item.mcpRouteId === apiId
           } else {
@@ -570,22 +584,66 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
         } else if ('mcpServerName' in item) {
           return item.mcpServerName === apiId
         } else if ('agentApiId' in item || 'agentApiName' in item) {
-          // Agent API: 匹配agentApiId或agentApiName
           return item.agentApiId === apiId || item.agentApiName === apiId
         } else if ('modelApiId' in item || 'modelApiName' in item) {
-          // Model API (AI Gateway): 匹配modelApiId或modelApiName
           return item.modelApiId === apiId || item.modelApiName === apiId
         } else if ('modelRouteName' in item && item.fromGatewayType === 'HIGRESS') {
-          // Model API (Higress): 匹配modelRouteName字段
           return item.modelRouteName === apiId
         } else if ('agentName' in item) {
-          // Nacos Agent: 匹配agentName
           return item.agentName === apiId
         }
         return false
       })
+
+      // MCP 产品：统一走 saveMeta 接口
+      if (apiProduct.type === 'MCP_SERVER' && selectedApi) {
+        try {
+          const mcpServerName = (selectedApi as any).mcpServerName || apiId
+          await mcpServerApi.saveMeta({
+            productId: apiProduct.productId,
+            mcpName: mcpServerName,
+            displayName: mcpServerName,
+            protocolType: 'sse',
+            connectionConfig: '{}',
+            origin: sourceType,
+            gatewayId: sourceType === 'GATEWAY' ? gatewayId : undefined,
+            nacosId: sourceType === 'NACOS' ? nacosId : undefined,
+            refConfig: JSON.stringify(
+              sourceType === 'NACOS'
+                ? { ...selectedApi, namespaceId: selectedNamespace || 'public' }
+                : selectedApi
+            ),
+            visibility: 'PUBLIC',
+            publishStatus: 'DRAFT',
+          })
+          message.success('MCP 配置导入成功')
+          setIsModalVisible(false)
+
+          // 刷新关联信息
+          try {
+            const res = await apiProductApi.getApiProductRef(apiProduct.productId)
+            onLinkedServiceUpdate(res.data || null)
+          } catch {
+            onLinkedServiceUpdate(null)
+          }
+
+          await handleRefresh()
+          await fetchMcpMeta()
+
+          form.resetFields()
+          setSelectedGateway(null)
+          setSelectedNacos(null)
+          setApiList([])
+          setSourceType('GATEWAY')
+        } catch {
+          message.error('MCP 配置导入失败')
+        }
+        return
+      }
+
+      // 非 MCP 产品：走原有 createApiProductRef 接口
       const newService: LinkedService = {
-        gatewayId: sourceType === 'GATEWAY' ? gatewayId : undefined, // 对于 Nacos，使用 nacosId 作为 gatewayId
+        gatewayId: sourceType === 'GATEWAY' ? gatewayId : undefined,
         nacosId: sourceType === 'NACOS' ? nacosId : undefined,
         sourceType,
         productId: apiProduct.productId,
@@ -614,7 +672,6 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
         message.success('关联成功')
         setIsModalVisible(false)
 
-        // 重新获取关联信息并更新
         try {
           const res = await apiProductApi.getApiProductRef(apiProduct.productId)
           onLinkedServiceUpdate(res.data || null)
@@ -623,7 +680,6 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
           onLinkedServiceUpdate(null)
         }
 
-        // 重新获取产品详情（特别重要，因为关联API后apiProduct.apiConfig可能会更新）
         handleRefresh()
 
         form.resetFields()
@@ -648,20 +704,29 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
 
 
   const handleDelete = () => {
-    if (!linkedService) return
+    const isMcp = apiProduct.type === 'MCP_SERVER'
+
+    // MCP 产品：即使没有 linkedService，也可能有 mcpMetaList 需要清除
+    if (!isMcp && !linkedService) return
 
     Modal.confirm({
-      title: '确认解除关联',
-      content: '确定要解除与当前API的关联吗？',
+      title: isMcp ? '确认解除配置' : '确认解除关联',
+      content: isMcp ? '确定要解除当前MCP配置吗？这将同时删除关联数据和MCP元信息。' : '确定要解除与当前API的关联吗？',
       icon: <ExclamationCircleOutlined />,
       onOk() {
-        return apiProductApi.deleteApiProductRef(apiProduct.productId).then(() => {
-          message.success('解除关联成功')
+        const deletePromise = isMcp
+          ? mcpServerApi.deleteMetaByProduct(apiProduct.productId)
+          : apiProductApi.deleteApiProductRef(apiProduct.productId)
+
+        return deletePromise.then(() => {
+          message.success(isMcp ? '解除配置成功' : '解除关联成功')
           onLinkedServiceUpdate(null)
-          // 重新获取产品详情（解除关联后apiProduct.apiConfig可能会更新）
+          if (isMcp) {
+            setMcpMetaList([])
+          }
           handleRefresh()
         }).catch(() => {
-          message.error('解除关联失败')
+          message.error(isMcp ? '解除配置失败' : '解除关联失败')
         })
       }
     })
@@ -725,6 +790,11 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
         apiName = linkedService.nacosRefConfig.mcpServerName || '未命名'
         sourceInfo = 'Nacos服务发现'
         gatewayInfo = linkedService.nacosId || '未知'
+      } else if (linkedService.sourceType === 'CUSTOM') {
+        // 自定义配置的MCP Server
+        apiName = apiProduct.name || '未命名'
+        sourceInfo = '自定义配置'
+        gatewayInfo = '-'
       }
     } else if (apiProduct.type === 'AGENT_API') {
       // Agent API 类型产品 - 可以关联 AI 网关或 Nacos 上的 Agent API
@@ -779,16 +849,106 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
 
   const renderLinkInfo = () => {
     const serviceInfo = getServiceInfo()
+    const isMcp = apiProduct.type === 'MCP_SERVER'
+
+    // MCP 产品：优先根据 mcpMetaList 判断是否已配置
+    if (isMcp && mcpMetaList.length > 0) {
+      return (
+        <Card
+          className="mb-6"
+          title="MCP 配置信息"
+          extra={
+            <Button type="primary" danger icon={<DeleteOutlined />} onClick={handleDelete}>
+              解除配置
+            </Button>
+          }
+        >
+          {mcpMetaList.map((meta: any) => (
+            <div key={meta.mcpServerId} className="space-y-1">
+              <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                <span className="text-xs text-gray-600">MCP 名称:</span>
+                <span className="col-span-2 text-xs text-gray-900 font-mono">{meta.mcpName}</span>
+                <span className="text-xs text-gray-600">展示名称:</span>
+                <span className="col-span-2 text-xs text-gray-900">{meta.displayName}</span>
+              </div>
+              <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                <span className="text-xs text-gray-600">协议类型:</span>
+                <span className="col-span-2 text-xs text-gray-900">{meta.protocolType?.toUpperCase()}</span>
+                <span className="text-xs text-gray-600">来源:</span>
+                <span className="col-span-2 text-xs text-gray-900">{meta.origin === 'GATEWAY' ? '网关导入' : meta.origin === 'NACOS' ? 'Nacos导入' : '自定义配置'}</span>
+              </div>
+              <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                <span className="text-xs text-gray-600">发布状态:</span>
+                <span className="col-span-2 text-xs text-gray-900">{meta.publishStatus === 'PUBLISHED' ? '已发布' : '草稿'}</span>
+                <span className="text-xs text-gray-600">可见性:</span>
+                <span className="col-span-2 text-xs text-gray-900">{meta.visibility === 'PUBLIC' ? '公开' : '私有'}</span>
+              </div>
+              {meta.repoUrl && (
+                <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                  <span className="text-xs text-gray-600">仓库地址:</span>
+                  <a href={meta.repoUrl} target="_blank" rel="noopener noreferrer" className="col-span-5 text-xs text-blue-500 hover:underline truncate">
+                    {meta.repoUrl}
+                  </a>
+                </div>
+              )}
+              {meta.description && (
+                <div className="grid grid-cols-6 gap-8 pt-2 pb-2">
+                  <span className="text-xs text-gray-600">描述:</span>
+                  <span className="col-span-5 text-xs text-gray-700 leading-relaxed">{meta.description}</span>
+                </div>
+              )}
+            </div>
+          ))}
+        </Card>
+      )
+    }
 
     // 没有关联任何API
     if (!linkedService || !serviceInfo) {
       return (
         <Card className="mb-6">
           <div className="text-center py-8">
-            <div className="text-gray-500 mb-4">暂未关联任何API</div>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)}>
-              关联API
-            </Button>
+            <div className="text-gray-500 mb-4">{isMcp ? '暂未配置MCP Server' : '暂未关联任何API'}</div>
+            {isMcp ? (
+              <div className="max-w-2xl mx-auto">
+                <div className="grid grid-cols-3 gap-4 mt-2">
+                  <div
+                    onClick={() => setIsModalVisible(true)}
+                    className="group cursor-pointer rounded-xl border-2 border-dashed border-gray-200 hover:border-blue-400 p-5 transition-all duration-200 hover:bg-blue-50/50"
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-blue-50 group-hover:bg-blue-100 flex items-center justify-center mx-auto mb-3 transition-colors">
+                      <CloudUploadOutlined className="text-blue-500 text-lg" />
+                    </div>
+                    <div className="font-medium text-sm text-gray-800 mb-1">从网关/Nacos导入</div>
+                    <div className="text-xs text-gray-400 leading-relaxed">关联已有网关或 Nacos 中注册的 MCP Server</div>
+                  </div>
+                  <div
+                    onClick={() => setIsCustomConfigModalVisible(true)}
+                    className="group cursor-pointer rounded-xl border-2 border-dashed border-gray-200 hover:border-purple-400 p-5 transition-all duration-200 hover:bg-purple-50/50"
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-purple-50 group-hover:bg-purple-100 flex items-center justify-center mx-auto mb-3 transition-colors">
+                      <SettingOutlined className="text-purple-500 text-lg" />
+                    </div>
+                    <div className="font-medium text-sm text-gray-800 mb-1">自定义数据</div>
+                    <div className="text-xs text-gray-400 leading-relaxed">手动配置 MCP Server 的连接信息和工具定义</div>
+                  </div>
+                  <div
+                    onClick={() => setIsAgentRuntimeModalVisible(true)}
+                    className="group cursor-pointer rounded-xl border-2 border-dashed border-gray-200 hover:border-green-400 p-5 transition-all duration-200 hover:bg-green-50/50"
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-green-50 group-hover:bg-green-100 flex items-center justify-center mx-auto mb-3 transition-colors">
+                      <RocketOutlined className="text-green-500 text-lg" />
+                    </div>
+                    <div className="font-medium text-sm text-gray-800 mb-1">从AgentRuntime导入</div>
+                    <div className="text-xs text-gray-400 leading-relaxed">从沙箱运行时环境中导入已部署的 MCP Server</div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)}>
+                关联API
+              </Button>
+            )}
           </div>
         </Card>
       )
@@ -817,11 +977,45 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
           <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
             <span className="text-xs text-gray-600">来源:</span>
             <span className="col-span-2 text-xs text-gray-900">{serviceInfo.sourceInfo}</span>
-            <span className="text-xs text-gray-600">
-              {linkedService?.sourceType === 'NACOS' ? 'Nacos ID:' : '网关ID:'}
-            </span>
-            <span className="col-span-2 text-xs text-gray-700">{serviceInfo.gatewayInfo}</span>
+            {linkedService?.sourceType !== 'CUSTOM' && (
+              <>
+                <span className="text-xs text-gray-600">
+                  {linkedService?.sourceType === 'NACOS' ? 'Nacos ID:' : '网关ID:'}
+                </span>
+                <span className="col-span-2 text-xs text-gray-700">{serviceInfo.gatewayInfo}</span>
+              </>
+            )}
           </div>
+
+          {/* CUSTOM 类型：展示 MCP Meta 详情 */}
+          {linkedService?.sourceType === 'CUSTOM' && mcpMetaList.length > 0 && (
+            <>
+              {mcpMetaList.map((meta: any) => (
+                <div key={meta.mcpServerId}>
+                  <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                    <span className="text-xs text-gray-600">MCP 名称:</span>
+                    <span className="col-span-2 text-xs text-gray-900 font-mono">{meta.mcpName}</span>
+                    <span className="text-xs text-gray-600">展示名称:</span>
+                    <span className="col-span-2 text-xs text-gray-900">{meta.displayName}</span>
+                  </div>
+                  <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                    <span className="text-xs text-gray-600">协议类型:</span>
+                    <span className="col-span-2 text-xs text-gray-900">{meta.protocolType?.toUpperCase()}</span>
+                    <span className="text-xs text-gray-600">发布状态:</span>
+                    <span className="col-span-2 text-xs text-gray-900">{meta.publishStatus === 'PUBLISHED' ? '已发布' : '草稿'}</span>
+                  </div>
+                  {meta.repoUrl && (
+                    <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                      <span className="text-xs text-gray-600">仓库地址:</span>
+                      <a href={meta.repoUrl} target="_blank" rel="noopener noreferrer" className="col-span-5 text-xs text-blue-500 hover:underline truncate">
+                        {meta.repoUrl}
+                      </a>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </Card>
     )
@@ -1734,15 +1928,15 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
   return (
     <div className="p-6 space-y-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold mb-2">API关联</h1>
-        <p className="text-gray-600">管理Product关联的API</p>
+        <h1 className="text-2xl font-bold mb-2">{apiProduct.type === 'MCP_SERVER' ? '配置MCP' : 'API关联'}</h1>
+        <p className="text-gray-600">{apiProduct.type === 'MCP_SERVER' ? '管理Product关联的MCP Server' : '管理Product关联的API'}</p>
       </div>
 
       {renderLinkInfo()}
       {renderApiConfig()}
 
       <Modal
-        title={linkedService ? '重新关联API' : '关联新API'}
+        title={linkedService ? (apiProduct.type === 'MCP_SERVER' ? '重新关联MCP Server' : '重新关联API') : (apiProduct.type === 'MCP_SERVER' ? '关联MCP Server' : '关联新API')}
         open={isModalVisible}
         onOk={handleModalOk}
         onCancel={handleModalCancel}
@@ -1948,6 +2142,59 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
             </Form.Item>
           )}
         </Form>
+      </Modal>
+
+      {/* 自定义数据配置弹窗 */}
+      <McpCustomConfigModal
+        visible={isCustomConfigModalVisible}
+        onCancel={() => setIsCustomConfigModalVisible(false)}
+        onOk={async (values) => {
+          try {
+            const iconJson = values.icon
+              ? JSON.stringify({ type: 'BASE64', data: values.icon })
+              : values.iconUrl
+                ? JSON.stringify({ type: 'URL', url: values.iconUrl })
+                : undefined
+
+            await mcpServerApi.saveMeta({
+              productId: apiProduct.productId,
+              mcpName: values.mcpServerName,
+              displayName: values.mcpDisplayName,
+              description: values.description,
+              repoUrl: values.repoUrl,
+              sourceType: 'config',
+              origin: 'ADMIN',
+              tags: values.tags ? JSON.stringify(values.tags) : undefined,
+              icon: iconJson,
+              protocolType: values.protocolType,
+              connectionConfig: values.mcpConfigJson,
+              extraParams: values.extraParams?.length ? JSON.stringify(values.extraParams) : undefined,
+              serviceIntro: values.serviceIntro,
+              visibility: 'PUBLIC',
+              publishStatus: 'DRAFT',
+            })
+            message.success('MCP 配置保存成功')
+            setIsCustomConfigModalVisible(false)
+            await fetchMcpMeta()
+            await handleRefresh()
+          } catch {
+            message.error('MCP 配置保存失败')
+          }
+        }}
+      />
+
+      {/* 从AgentRuntime导入弹窗 - 占位 */}
+      <Modal
+        title="从AgentRuntime导入"
+        open={isAgentRuntimeModalVisible}
+        onCancel={() => setIsAgentRuntimeModalVisible(false)}
+        footer={null}
+        width={600}
+      >
+        <div className="text-center py-12 text-gray-400">
+          <RocketOutlined className="text-4xl mb-4 block" />
+          <p>从AgentRuntime导入页面（开发中）</p>
+        </div>
       </Modal>
     </div>
   )

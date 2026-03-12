@@ -59,7 +59,19 @@ public class AcpConnectionManager {
             String providerKey,
             RuntimeConfig config,
             AcpProperties.CliProviderConfig providerConfig,
-            SandboxType sandboxType) {}
+            SandboxType sandboxType,
+            String sandboxInstanceId) {
+
+        /** 向后兼容：不指定 sandboxInstanceId */
+        public DeferredInitParams(
+                String userId,
+                String providerKey,
+                RuntimeConfig config,
+                AcpProperties.CliProviderConfig providerConfig,
+                SandboxType sandboxType) {
+            this(userId, providerKey, config, providerConfig, sandboxType, null);
+        }
+    }
 
     /**
      * 注册新连接。在 WebSocket 连接建立时调用，初始化该 session 的所有状态映射。

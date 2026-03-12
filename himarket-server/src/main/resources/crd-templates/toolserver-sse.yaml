@@ -1,0 +1,43 @@
+apiVersion: agentruntime.alibabacloud.com/v1alpha1
+kind: ToolServer
+metadata:
+  annotations:
+    agentruntime.alibabacloud.com/release: "true"
+  name: ${RESOURCE_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  cluster:
+    id: ${CLUSTER_ID}
+  showName: ${SHOW_NAME}
+  template:
+    spec:
+      revisionDescription: himarket-release
+      version: v1.0.0
+      accesses:
+${ACCESSES_YAML}
+      artifact:
+        repository:
+          image: registry.cn-hangzhou.aliyuncs.com/edas-test-ns/mcp-proxy-server:1.0.0
+        type: McpDefinition
+      concurrency: 100
+      idleTimeoutSeconds: 1800
+      isolation: shared
+${ENV_YAML}
+      mcpServers: |-
+        ${MCP_SERVERS_JSON}
+      protocol: ${PROTOCOL}
+      resources:
+        limits:
+          cpu: 500m
+          memory: 1Gi
+        requests:
+          cpu: 125m
+          memory: 256Mi
+      scaling:
+        maxReplicas: 10
+        minReplicas: 0
+        scaleDownSeconds: 300
+      storage:
+        ephemeral:
+          capacity: 1Gi
+      type: managed

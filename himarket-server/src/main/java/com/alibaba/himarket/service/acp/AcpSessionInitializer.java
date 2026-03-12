@@ -59,6 +59,7 @@ public class AcpSessionInitializer {
      * @param runtimeConfig 运行时配置
      * @param sessionConfig 前端传入的会话配置（可为 null）
      * @param sandboxType 沙箱类型
+     * @param sandboxInstanceId 关联的 Sandbox 实例 ID（远程沙箱时使用，可为 null）
      * @param frontendSession 前端 WebSocket session（传递给 InitContext，用于阶段内推送进度）
      * @return 初始化结果
      */
@@ -69,6 +70,7 @@ public class AcpSessionInitializer {
             RuntimeConfig runtimeConfig,
             CliSessionConfig sessionConfig,
             SandboxType sandboxType,
+            String sandboxInstanceId,
             WebSocketSession frontendSession) {
 
         try {
@@ -93,7 +95,8 @@ public class AcpSessionInitializer {
                             runtimeConfig.getEnv() != null ? runtimeConfig.getEnv() : Map.of(),
                             Map.of(),
                             null,
-                            0);
+                            0,
+                            sandboxInstanceId);
 
             // 5. 构建 InitContext（设置 resolvedSessionConfig）
             InitContext context =

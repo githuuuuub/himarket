@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MCP广场 - 完整数据流图</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#f0f2f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif;padding:32px}
+.page{max-width:1400px;margin:0 auto}
+h1{text-align:center;font-size:26px;color:#1a1a1a;margin-bottom:4px}
+.subtitle{text-align:center;color:#888;font-size:13px;margin-bottom:32px}
+.card{background:#fff;border-radius:14px;padding:36px 40px;box-shadow:0 1px 8px rgba(0,0,0,.06);margin-bottom:24px}
+.card-title{font-size:18px;font-weight:700;color:#1a1a1a;margin-bottom:20px;display:flex;align-items:center;gap:8px}
+.badge{font-size:11px;padding:3px 10px;border-radius:12px;font-weight:600;color:#fff}
+.badge-purple{background:#7c3aed}.badge-blue{background:#2563eb}.badge-green{background:#059669}
+.badge-pink{background:#db2777}.badge-orange{background:#d97706}.badge-gray{background:#6b7280}
+hr.sep{border:none;border-top:1.5px dashed #e5e7eb;margin:28px 0}
+</style>
+</head>
+<body>
+<div class="page">
+<h1>MCP广场 数据流全景图</h1>
+<p class="subtitle">冷数据(元数据) ↔ 热数据(可调用MCP) · AgentRun沙箱托管 · 网关导入 · 第三方市场</p>
+
+<!-- ==================== 架构总览 ==================== -->
+<div class="card">
+<div class="card-title">🏗️ 架构总览</div>
+<div style="display:flex;justify-content:center;gap:0;align-items:stretch;flex-wrap:wrap">
+  <div style="flex:1;min-width:140px;max-width:200px;background:linear-gradient(135deg,#ede9fe,#ddd6fe);border:2px solid #8b5cf6;border-radius:12px;padding:16px;text-align:center">
+    <div style="font-size:24px;margin-bottom:4px">👤</div>
+    <div style="font-weight:700;color:#5b21b6;font-size:13px">用户</div>
+    <div style="font-size:11px;color:#7c3aed;margin-top:4px">浏览广场 / 订阅 / 上传</div>
+  </div>
+  <div style="display:flex;align-items:center;padding:0 6px"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2"><path d="M5 12h14M13 5l6 7-6 7"/></svg></div>
+  <div style="flex:1;min-width:140px;max-width:200px;background:linear-gradient(135deg,#dbeafe,#bfdbfe);border:2px solid #3b82f6;border-radius:12px;padding:16px;text-align:center">
+    <div style="font-size:24px;margin-bottom:4px">🖥️</div>
+    <div style="font-weight:700;color:#1e40af;font-size:13px">himarket-frontend</div>
+    <div style="font-size:11px;color:#3b82f6;margin-top:4px">MCP广场 / 我的MCP</div>
+  </div>
+  <div style="display:flex;align-items:center;padding:0 6px"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><path d="M5 12h14M13 5l6 7-6 7"/></svg></div>
+  <div style="flex:1;min-width:140px;max-width:200px;background:linear-gradient(135deg,#fef3c7,#fde68a);border:2px solid #f59e0b;border-radius:12px;padding:16px;text-align:center">
+    <div style="font-size:24px;margin-bottom:4px">⚙️</div>
+    <div style="font-weight:700;color:#92400e;font-size:13px">himarket-server</div>
+    <div style="font-size:11px;color:#b45309;margin-top:4px">冷热数据管理 / 订阅编排</div>
+  </div>
+  <div style="display:flex;align-items:center;padding:0 6px"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M5 12h14M13 5l6 7-6 7"/></svg></div>
+  <div style="flex:1;min-width:140px;max-width:200px;background:linear-gradient(135deg,#fce7f3,#fbcfe8);border:2px solid #ec4899;border-radius:12px;padding:16px;text-align:center">
+    <div style="font-size:24px;margin-bottom:4px">📦</div>
+    <div style="font-weight:700;color:#9d174d;font-size:13px">AgentRun 沙箱</div>
+    <div style="font-size:11px;color:#db2777;margin-top:4px">托管MCP / 生成链接</div>
+  </div>
+</div>
+<div style="display:flex;justify-content:center;gap:0;align-items:stretch;margin-top:12px;flex-wrap:wrap">
+  <div style="flex:1;min-width:140px;max-width:200px;background:linear-gradient(135deg,#d1fae5,#a7f3d0);border:2px solid #10b981;border-radius:12px;padding:16px;text-align:center">
+    <div style="font-size:24px;margin-bottom:4px">🗄️</div>
+    <div style="font-weight:700;color:#065f46;font-size:13px">数据库</div>
+    <div style="font-size:11px;color:#059669;margin-top:4px">冷数据表 / 热数据表 / 订阅表</div>
+  </div>
+  <div style="width:40px"></div>
+  <div style="flex:1;min-width:140px;max-width:200px;background:linear-gradient(135deg,#e0e7ff,#c7d2fe);border:2px solid #6366f1;border-radius:12px;padding:16px;text-align:center">
+    <div style="font-size:24px;margin-bottom:4px">🌐</div>
+    <div style="font-weight:700;color:#3730a3;font-size:13px">API 网关</div>
+    <div style="font-size:11px;color:#4f46e5;margin-top:4px">Higress / APIG_AI / 等</div>
+  </div>
+  <div style="width:40px"></div>
+  <div style="flex:1;min-width:140px;max-width:200px;background:linear-gradient(135deg,#f3e8ff,#e9d5ff);border:2px solid #a855f7;border-radius:12px;padding:16px;text-align:center">
+    <div style="font-size:24px;margin-bottom:4px">🏪</div>
+    <div style="font-weight:700;color:#6b21a8;font-size:13px">第三方MCP市场</div>
+    <div style="font-size:11px;color:#7c3aed;margin-top:4px">外部MCP元数据源</div>
+  </div>
+  <div style="width:40px"></div>
+  <div style="flex:1;min-width:140px;max-width:200px;background:linear-gradient(135deg,#fef2f2,#fecaca);border:2px solid #ef4444;border-radius:12px;padding:16px;text-align:center">
+    <div style="font-size:24px;margin-bottom:4px">🛡️</div>
+    <div style="font-weight:700;color:#991b1b;font-size:13px">管理员后台</div>
+    <div style="font-size:11px;color:#dc2626;margin-top:4px">添加MCP / 审核 / 导入网关</div>
+  </div>
+</div>
+</div>
+
+<!-- ==================== 冷数据来源 ==================== -->
+<div class="card">
+<div class="card-title">❄️ 冷数据来源（MCP元数据 → 展示在MCP广场）</div>
+
+<div style="display:flex;gap:16px;flex-wrap:wrap">
+  <!-- 来源1 -->
+  <div style="flex:1;min-width:320px;border:2px solid #ef4444;border-radius:12px;padding:20px;background:#fef2f2">
+    <div style="font-weight:700;color:#991b1b;font-size:14px;margin-bottom:12px">
+      <span class="badge badge-orange">来源1</span> 管理员手动添加
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="background:#fecaca;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#991b1b;white-space:nowrap">🛡️ 管理员后台</div>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M5 12h14M13 5l6 7-6 7"/></svg>
+        <div style="background:#fef3c7;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#92400e;white-space:nowrap">⚙️ himarket-server</div>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M5 12h14M13 5l6 7-6 7"/></svg>
+        <div style="background:#d1fae5;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#065f46;white-space:nowrap">🗄️ 冷数据表</div>
+      </div>
+      <div style="font-size:12px;color:#666;margin-left:4px">手动填写MCP名称、描述、图标、tools配置等元数据 → 所有用户可见</div>
+    </div>
+  </div>
+
+  <!-- 来源1b -->
+  <div style="flex:1;min-width:320px;border:2px solid #6366f1;border-radius:12px;padding:20px;background:#eef2ff">
+    <div style="font-weight:700;color:#3730a3;font-size:14px;margin-bottom:12px">
+      <span class="badge badge-orange">来源1b</span> 管理员导入网关MCP
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <div style="background:#fecaca;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#991b1b;white-space:nowrap">🛡️ 管理员后台</div>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M5 12h14M13 5l6 7-6 7"/></svg>
+        <div style="background:#e0e7ff;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#3730a3;white-space:nowrap">🌐 网关</div>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><path d="M5 12h14M13 5l6 7-6 7"/></svg>
+        <div style="background:#d1fae5;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#065f46;white-space:nowrap">🗄️ 冷数据 + 热数据</div>
+      </div>
+      <div style="font-size:12px;color:#666;margin-left:4px">导入网关已有MCP → 同时写入冷数据(元数据)和热数据(网关MCP链接)<br/>广场展示冷数据，用户订阅后展示热数据链接 → 所有用户可见</div>
+    </div>
+  </div>
+</div>
+
+<div style="display:flex;gap:16px;margin-top:16px;flex-wrap:wrap">
+  <!-- 来源2 -->
+  <div style="flex:1;min-width:320px;border:2px solid #8b5cf6;border-radius:12px;padding:20px;background:#f5f3ff">
+    <div style="font-weight:700;color:#5b21b6;font-size:14px;margin-bottom:12px">
+      <span class="badge badge-purple">来源2</span> 用户自定义上传
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <div style="background:#ede9fe;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#5b21b6;white-space:nowrap">👤 用户</div>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2"><path d="M5 12h14M13 5l6 7-6 7"/></svg>
+        <div style="background:#fef3c7;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#92400e;white-space:nowrap">⚙️ server</div>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M5 12h14M13 5l6 7-6 7"/></svg>
+        <div style="background:#fce7f3;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#9d174d;white-space:nowrap">📦 AgentRun</div>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="2"><path d="M5 12h14M13 5l6 7-6 7"/></svg>
+        <div style="background:#d1fae5;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#065f46;white-space:nowrap">🗄️ 冷+热数据</div>
+      </div>
+      <div style="font-size:12px;color:#666;margin-left:4px">上传元数据 → 自动调AgentRun托管 → 生成热数据 → 仅自己可见<br/>可点击"发布" → 进入审核状态 → 管理员审核通过后所有用户可见</div>
+    </div>
+  </div>
+
+  <!-- 来源3 -->
+  <div style="flex:1;min-width:320px;border:2px solid #a855f7;border-radius:12px;padding:20px;background:#faf5ff">
+    <div style="font-weight:700;color:#6b21a8;font-size:14px;margin-bottom:12px">
+      <span class="badge badge-pink">来源3</span> 关联第三方MCP市场
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <div style="background:#fecaca;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#991b1b;white-space:nowrap">🛡️ 管理员后台</div>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M5 12h14M13 5l6 7-6 7"/></svg>
+        <div style="background:#f3e8ff;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#6b21a8;white-space:nowrap">🏪 第三方市场</div>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2"><path d="M5 12h14M13 5l6 7-6 7"/></svg>
+        <div style="background:#d1fae5;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#065f46;white-space:nowrap">🗄️ 冷数据表</div>
+      </div>
+      <div style="font-size:12px;color:#666;margin-left:4px">管理员关联第三方市场 → 同步MCP元数据到冷数据表 → 所有用户可见</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ==================== 订阅流程(冷→热) ==================== -->
+<div class="card">
+<div class="card-title">🔥 订阅流程（冷数据 → 热数据转换）</div>
+
+<div style="background:#f8fafc;border:2px solid #e2e8f0;border-radius:12px;padding:24px;margin-bottom:20px">
+  <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-bottom:16px">用户点击"订阅"按钮后的决策流程</div>
+  
+  <!-- 流程图 -->
+  <div style="display:flex;flex-direction:column;gap:0;align-items:center">
+    <!-- 起点 -->
+    <div style="background:#3b82f6;color:#fff;padding:10px 24px;border-radius:24px;font-size:13px;font-weight:600">用户点击「订阅」</div>
+    <div style="width:2px;height:20px;background:#cbd5e1"></div>
+    <svg width="12" height="12" viewBox="0 0 12 12"><polygon points="6,12 0,0 12,0" fill="#cbd5e1"/></svg>
+    
+    <!-- 判断 -->
+    <div style="background:#fef3c7;border:2px solid #f59e0b;padding:12px 20px;border-radius:12px;font-size:13px;font-weight:600;color:#92400e;transform:rotate(0deg)">
+      ⚙️ himarket-server 检查热数据表
+    </div>
+    
+    <div style="display:flex;gap:80px;margin-top:0;width:100%;justify-content:center">
+      <!-- 左分支：有热数据 -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:0">
+        <div style="width:2px;height:20px;background:#10b981"></div>
+        <div style="background:#d1fae5;border:2px solid #10b981;padding:6px 16px;border-radius:16px;font-size:12px;font-weight:600;color:#065f46">✅ 有热数据（网关导入的）</div>
+        <div style="width:2px;height:16px;background:#10b981"></div>
+        <svg width="12" height="12" viewBox="0 0 12 12"><polygon points="6,12 0,0 12,0" fill="#10b981"/></svg>
+        <div style="background:#ecfdf5;border:1.5px solid #10b981;padding:10px 16px;border-radius:10px;font-size:12px;color:#065f46;text-align:center;max-width:220px">
+          直接创建订阅记录<br/>将热数据(MCP链接)展示在<br/><b>「我的MCP」</b>中
+        </div>
+      </div>
+      
+      <!-- 右分支：无热数据 -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:0">
+        <div style="width:2px;height:20px;background:#ec4899"></div>
+        <div style="background:#fce7f3;border:2px solid #ec4899;padding:6px 16px;border-radius:16px;font-size:12px;font-weight:600;color:#9d174d">❌ 无热数据</div>
+        <div style="width:2px;height:16px;background:#ec4899"></div>
+        <svg width="12" height="12" viewBox="0 0 12 12"><polygon points="6,12 0,0 12,0" fill="#ec4899"/></svg>
+        <div style="background:#fdf2f8;border:1.5px solid #ec4899;padding:10px 16px;border-radius:10px;font-size:12px;color:#9d174d;text-align:center;max-width:220px">
+          调用 <b>AgentRun</b> 沙箱服务<br/>传入MCP元数据<br/>↓<br/>AgentRun 返回 MCP endpoint<br/>↓<br/>保存到热数据表<br/>创建订阅记录<br/>展示在 <b>「我的MCP」</b>中
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 时序图 -->
+<div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-bottom:12px">详细时序</div>
+<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:20px;font-family:'SF Mono',Monaco,monospace;font-size:12px;line-height:2.2;color:#475569;overflow-x:auto;white-space:pre">
+用户        →  Frontend      :  点击「订阅」按钮
+Frontend    →  Server        :  POST /mcp-market/{id}/subscribe
+Server      →  DB            :  查询热数据表 WHERE mcp_cold_id = {id}
+DB          →  Server        :  返回结果
+
+<b style="color:#10b981">【分支A：有热数据（网关导入）】</b>
+Server      →  DB            :  创建订阅记录 (user_id, mcp_cold_id, mcp_hot_id)
+Server      →  Frontend      :  返回 {mcpEndpoint, status: "ready"}
+Frontend    →  用户           :  展示在「我的MCP」，可直接使用
+
+<b style="color:#ec4899">【分支B：无热数据（需AgentRun托管）】</b>
+Server      →  DB            :  查询冷数据表获取MCP元数据
+Server      →  AgentRun      :  POST 沙箱API {sourceType, sourceUrl, envVars, tools}
+AgentRun    →  Server        :  返回 {instanceId, mcpEndpoint}
+Server      →  DB            :  写入热数据表 (mcp_cold_id, endpoint, sandbox_instance_id)
+Server      →  DB            :  创建订阅记录 (user_id, mcp_cold_id, mcp_hot_id)
+Server      →  Frontend      :  返回 {mcpEndpoint, status: "ready"}
+Frontend    →  用户           :  展示在「我的MCP」，可直接使用
+</div>
+</div>
+
+<!-- ==================== 热数据来源 ==================== -->
+<div class="card">
+<div class="card-title">🔥 热数据来源（可调用的MCP链接）</div>
+
+<div style="display:flex;gap:16px;flex-wrap:wrap">
+  <!-- 热数据来源1 -->
+  <div style="flex:1;min-width:300px;border:2px solid #6366f1;border-radius:12px;padding:20px;background:#eef2ff">
+    <div style="font-weight:700;color:#3730a3;font-size:14px;margin-bottom:8px">
+      <span class="badge badge-blue">热源1</span> 网关导入的MCP
+    </div>
+    <div style="font-size:12px;color:#555;line-height:1.8">
+      管理员导入网关MCP时 <b>同时写入冷+热数据</b><br/>
+      热数据 = 网关的MCP SSE/HTTP链接<br/>
+      用户订阅后直接使用，<b>不需要AgentRun</b>
+    </div>
+    <div style="margin-top:8px;background:#e0e7ff;border-radius:6px;padding:6px 10px;font-size:11px;color:#3730a3;font-family:monospace">
+      endpoint: https://gateway.xx/mcp/server-name
+    </div>
+  </div>
+
+  <!-- 热数据来源2a -->
+  <div style="flex:1;min-width:300px;border:2px solid #8b5cf6;border-radius:12px;padding:20px;background:#f5f3ff">
+    <div style="font-weight:700;color:#5b21b6;font-size:14px;margin-bottom:8px">
+      <span class="badge badge-purple">热源2a</span> 用户直接导入MCP服务
+    </div>
+    <div style="font-size:12px;color:#555;line-height:1.8">
+      用户直接填入已有的SSE/HTTP MCP地址<br/>
+      <b>不需要AgentRun</b>，直接作为热数据<br/>
+      发布后对其他用户是冷数据，订阅后变热
+    </div>
+    <div style="margin-top:8px;background:#ede9fe;border-radius:6px;padding:6px 10px;font-size:11px;color:#5b21b6;font-family:monospace">
+      endpoint: https://user-mcp.xx/sse
+    </div>
+  </div>
+
+  <!-- 热数据来源2b -->
+  <div style="flex:1;min-width:300px;border:2px solid #ec4899;border-radius:12px;padding:20px;background:#fdf2f8">
+    <div style="font-weight:700;color:#9d174d;font-size:14px;margin-bottom:8px">
+      <span class="badge badge-pink">热源2b</span> 用户上传元数据 → AgentRun托管
+    </div>
+    <div style="font-size:12px;color:#555;line-height:1.8">
+      用户上传MCP元数据 → 自动调AgentRun<br/>
+      AgentRun生成沙箱MCP链接 → 保存为热数据<br/>
+      发布后对其他用户是冷数据，订阅时再次AgentRun
+    </div>
+    <div style="margin-top:8px;background:#fce7f3;border-radius:6px;padding:6px 10px;font-size:11px;color:#9d174d;font-family:monospace">
+      endpoint: https://agentrun.xx/sandbox/mcp/abc123
+    </div>
+  </div>
+</div>
+
+<div style="display:flex;gap:16px;margin-top:16px;flex-wrap:wrap">
+  <!-- 热数据来源3 -->
+  <div style="flex:1;min-width:300px;border:2px solid #a855f7;border-radius:12px;padding:20px;background:#faf5ff">
+    <div style="font-weight:700;color:#6b21a8;font-size:14px;margin-bottom:8px">
+      <span class="badge badge-pink">热源3</span> 第三方市场MCP → AgentRun托管
+    </div>
+    <div style="font-size:12px;color:#555;line-height:1.8">
+      用户订阅第三方市场的MCP时<br/>
+      调AgentRun托管 → 生成沙箱MCP链接<br/>
+      保存为该用户的热数据
+    </div>
+    <div style="margin-top:8px;background:#f3e8ff;border-radius:6px;padding:6px 10px;font-size:11px;color:#6b21a8;font-family:monospace">
+      endpoint: https://agentrun.xx/sandbox/mcp/def456
+    </div>
+  </div>
+  <div style="flex:2;min-width:300px"></div>
+</div>
+</div>
+
+<!-- ==================== 用户发布流程 ==================== -->
+<div class="card">
+<div class="card-title">📤 用户发布流程（我的MCP → MCP广场）</div>
+<div style="display:flex;align-items:center;gap:0;flex-wrap:wrap;justify-content:center">
+  <div style="background:#ede9fe;border:2px solid #8b5cf6;border-radius:10px;padding:10px 16px;font-size:12px;font-weight:600;color:#5b21b6;text-align:center">
+    👤 用户点击<br/>「发布到市场」
+  </div>
+  <svg width="36" height="24" viewBox="0 0 36 24" fill="none" stroke="#8b5cf6" stroke-width="2"><path d="M4 12h28M26 5l6 7-6 7"/></svg>
+  <div style="background:#fef3c7;border:2px solid #f59e0b;border-radius:10px;padding:10px 16px;font-size:12px;font-weight:600;color:#92400e;text-align:center">
+    ⚙️ Server<br/>状态→审核中
+  </div>
+  <svg width="36" height="24" viewBox="0 0 36 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M4 12h28M26 5l6 7-6 7"/></svg>
+  <div style="background:#fef2f2;border:2px solid #ef4444;border-radius:10px;padding:10px 16px;font-size:12px;font-weight:600;color:#991b1b;text-align:center">
+    🛡️ 管理员<br/>审核
+  </div>
+  <svg width="36" height="24" viewBox="0 0 36 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M4 12h28M26 5l6 7-6 7"/></svg>
+  <div style="background:#d1fae5;border:2px solid #10b981;border-radius:10px;padding:10px 16px;font-size:12px;font-weight:600;color:#065f46;text-align:center">
+    ✅ 审核通过<br/>状态→已发布
+  </div>
+  <svg width="36" height="24" viewBox="0 0 36 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M4 12h28M26 5l6 7-6 7"/></svg>
+  <div style="background:#dbeafe;border:2px solid #3b82f6;border-radius:10px;padding:10px 16px;font-size:12px;font-weight:600;color:#1e40af;text-align:center">
+    🖥️ MCP广场<br/>所有用户可见
+  </div>
+</div>
+<div style="font-size:12px;color:#888;text-align:center;margin-top:12px">
+  发布后：对其他用户展示为冷数据 → 其他用户订阅时，如果是SSE/HTTP直连的则直接用，否则通过AgentRun生成各自的热数据
+</div>
+</div>
+
+<!-- ==================== 页面视图 ==================== -->
+<div class="card">
+<div class="card-title">📱 前端页面视图</div>
+<div style="display:flex;gap:20px;flex-wrap:wrap">
+  <div style="flex:1;min-width:340px;border:2px solid #3b82f6;border-radius:12px;overflow:hidden">
+    <div style="background:#3b82f6;color:#fff;padding:12px 16px;font-weight:700;font-size:14px">MCP广场（冷数据展示）</div>
+    <div style="padding:16px;font-size:12px;color:#555;line-height:2">
+      • 展示所有公开的MCP元数据卡片<br/>
+      • 来源标签：<span class="badge badge-orange" style="font-size:10px">管理员添加</span> <span class="badge" style="font-size:10px;background:#6366f1">网关导入</span> <span class="badge badge-pink" style="font-size:10px">第三方市场</span> <span class="badge badge-purple" style="font-size:10px">用户发布</span><br/>
+      • 卡片信息：名称、描述、tools数量、协议类型<br/>
+      • 操作按钮：「订阅」→ 触发冷→热转换流程<br/>
+      • 搜索、分类筛选、分页
+    </div>
+  </div>
+  <div style="flex:1;min-width:340px;border:2px solid #10b981;border-radius:12px;overflow:hidden">
+    <div style="background:#10b981;color:#fff;padding:12px 16px;font-weight:700;font-size:14px">我的MCP（热数据展示）</div>
+    <div style="padding:16px;font-size:12px;color:#555;line-height:2">
+      • 展示用户已订阅的MCP，都有可用的endpoint<br/>
+      • 显示MCP连接地址（SSE / HTTP）<br/>
+      • 可直接被Chat调用<br/>
+      • 操作按钮：「复制链接」「取消订阅」「发布到市场」<br/>
+      • 来源标签：<span class="badge" style="font-size:10px;background:#6366f1">网关</span> <span class="badge badge-pink" style="font-size:10px">AgentRun</span> <span class="badge badge-purple" style="font-size:10px">自定义</span><br/>
+      • 「+ 添加MCP」入口：上传元数据 或 直接填入SSE/HTTP地址
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ==================== 数据模型 ==================== -->
+<div class="card">
+<div class="card-title">📊 数据模型</div>
+<div style="display:flex;gap:20px;flex-wrap:wrap">
+
+  <div style="flex:1;min-width:280px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;padding:20px">
+    <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-bottom:12px">❄️ mcp_cold（冷数据/元数据表）</div>
+    <div style="font-family:'SF Mono',Monaco,monospace;font-size:12px;color:#475569;line-height:2.2">
+      <span style="color:#8b5cf6">id</span> BIGINT PK<br/>
+      <span style="color:#8b5cf6">name</span> VARCHAR(64) <span style="color:#9ca3af">— MCP名称</span><br/>
+      <span style="color:#8b5cf6">description</span> VARCHAR(512) <span style="color:#9ca3af">— 描述</span><br/>
+      <span style="color:#8b5cf6">icon</span> JSON <span style="color:#9ca3af">— 图标</span><br/>
+      <span style="color:#8b5cf6">source_type</span> ENUM <span style="color:#9ca3af">— git/npm/docker/config</span><br/>
+      <span style="color:#8b5cf6">source_url</span> VARCHAR(512) <span style="color:#9ca3af">— 源地址</span><br/>
+      <span style="color:#8b5cf6">env_vars</span> JSON <span style="color:#9ca3af">— 环境变量</span><br/>
+      <span style="color:#8b5cf6">tools_config</span> TEXT <span style="color:#9ca3af">— tools YAML</span><br/>
+      <span style="color:#8b5cf6">origin</span> ENUM <span style="color:#9ca3af">— admin/gateway/user/third_party</span><br/>
+      <span style="color:#8b5cf6">visibility</span> ENUM <span style="color:#9ca3af">— public/private</span><br/>
+      <span style="color:#8b5cf6">publish_status</span> ENUM <span style="color:#9ca3af">— draft/pending_review/published</span><br/>
+      <span style="color:#8b5cf6">gateway_id</span> VARCHAR(64) <span style="color:#9ca3af">— 网关来源ID(可空)</span><br/>
+      <span style="color:#8b5cf6">third_party_source</span> VARCHAR(128) <span style="color:#9ca3af">— 第三方市场标识(可空)</span><br/>
+      <span style="color:#8b5cf6">created_by</span> VARCHAR(64) <span style="color:#9ca3af">— 创建者</span><br/>
+      <span style="color:#8b5cf6">create_at</span> DATETIME
+    </div>
+  </div>
+
+  <div style="flex:1;min-width:280px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;padding:20px">
+    <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-bottom:12px">🔥 mcp_hot（热数据/可调用MCP表）</div>
+    <div style="font-family:'SF Mono',Monaco,monospace;font-size:12px;color:#475569;line-height:2.2">
+      <span style="color:#ec4899">id</span> BIGINT PK<br/>
+      <span style="color:#ec4899">mcp_cold_id</span> BIGINT FK <span style="color:#9ca3af">— 关联冷数据</span><br/>
+      <span style="color:#ec4899">user_id</span> VARCHAR(64) <span style="color:#9ca3af">— 所属用户(可空=全局)</span><br/>
+      <span style="color:#ec4899">endpoint_type</span> ENUM <span style="color:#9ca3af">— sse/http/stdio</span><br/>
+      <span style="color:#ec4899">mcp_endpoint</span> VARCHAR(512) <span style="color:#9ca3af">— MCP访问地址</span><br/>
+      <span style="color:#ec4899">hot_source</span> ENUM <span style="color:#9ca3af">— gateway/agentrun/user_direct</span><br/>
+      <span style="color:#ec4899">sandbox_instance_id</span> VARCHAR(128) <span style="color:#9ca3af">— AgentRun实例ID(可空)</span><br/>
+      <span style="color:#ec4899">gateway_id</span> VARCHAR(64) <span style="color:#9ca3af">— 网关ID(可空)</span><br/>
+      <span style="color:#ec4899">status</span> ENUM <span style="color:#9ca3af">— running/stopped/failed</span><br/>
+      <span style="color:#ec4899">create_at</span> DATETIME
+    </div>
+  </div>
+
+  <div style="flex:1;min-width:280px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;padding:20px">
+    <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-bottom:12px">📋 mcp_subscription（订阅关系表）</div>
+    <div style="font-family:'SF Mono',Monaco,monospace;font-size:12px;color:#475569;line-height:2.2">
+      <span style="color:#2563eb">id</span> BIGINT PK<br/>
+      <span style="color:#2563eb">user_id</span> VARCHAR(64) <span style="color:#9ca3af">— 订阅用户</span><br/>
+      <span style="color:#2563eb">mcp_cold_id</span> BIGINT FK <span style="color:#9ca3af">— 关联冷数据</span><br/>
+      <span style="color:#2563eb">mcp_hot_id</span> BIGINT FK <span style="color:#9ca3af">— 关联热数据</span><br/>
+      <span style="color:#2563eb">status</span> ENUM <span style="color:#9ca3af">— active/cancelled</span><br/>
+      <span style="color:#2563eb">create_at</span> DATETIME
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- 图例 -->
+<div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-top:8px;margin-bottom:16px">
+  <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#666"><div style="width:14px;height:14px;border-radius:4px;background:#ede9fe;border:2px solid #8b5cf6"></div>用户</div>
+  <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#666"><div style="width:14px;height:14px;border-radius:4px;background:#dbeafe;border:2px solid #3b82f6"></div>Frontend</div>
+  <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#666"><div style="width:14px;height:14px;border-radius:4px;background:#fef3c7;border:2px solid #f59e0b"></div>Server</div>
+  <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#666"><div style="width:14px;height:14px;border-radius:4px;background:#d1fae5;border:2px solid #10b981"></div>数据库</div>
+  <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#666"><div style="width:14px;height:14px;border-radius:4px;background:#fce7f3;border:2px solid #ec4899"></div>AgentRun</div>
+  <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#666"><div style="width:14px;height:14px;border-radius:4px;background:#e0e7ff;border:2px solid #6366f1"></div>网关</div>
+  <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#666"><div style="width:14px;height:14px;border-radius:4px;background:#f3e8ff;border:2px solid #a855f7"></div>第三方市场</div>
+  <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#666"><div style="width:14px;height:14px;border-radius:4px;background:#fef2f2;border:2px solid #ef4444"></div>管理员</div>
+</div>
+
+</div><!-- end page -->
+</body>
+</html>

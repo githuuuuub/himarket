@@ -1,0 +1,39 @@
+package com.alibaba.himarket.dto.result.mcp;
+
+import com.alibaba.himarket.dto.converter.OutputConverter;
+import com.alibaba.himarket.entity.McpServerMeta;
+import java.time.LocalDateTime;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+/**
+ * MCP Server 元信息返回结果。
+ */
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class McpMetaResult implements OutputConverter<McpMetaResult, McpServerMeta> {
+
+    private String mcpServerId;
+    private String productId;
+    private String displayName;
+    private String mcpName;
+    private String description;
+    private String repoUrl;
+    private String sourceType;
+    private String origin;
+    private String tags;
+    private String icon;
+    private String protocolType;
+    private String connectionConfig;
+    private String extraParams;
+    private String serviceIntro;
+    private String visibility;
+    private String publishStatus;
+    private String toolsConfig;
+    private String createdBy;
+    private LocalDateTime createAt;
+}

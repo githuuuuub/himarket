@@ -68,7 +68,7 @@ class RuntimeSelectionFilterPropertyTest {
             remoteConfig.setHost("");
         }
         props.setRemote(remoteConfig);
-        return new RuntimeSelector(props);
+        return new RuntimeSelector(props, null);
     }
 
     // ===== Property 6a: 仅展示兼容的运行时选项 =====
@@ -186,7 +186,7 @@ class RuntimeSelectionFilterPropertyTest {
             remoteConfig.setHost("sandbox.example.com");
         }
         props.setRemote(remoteConfig);
-        RuntimeSelector selector = new RuntimeSelector(props);
+        RuntimeSelector selector = new RuntimeSelector(props, null);
 
         assertTrue(selector.isSandboxAvailable(SandboxType.LOCAL), "LOCAL 运行时应始终可用，无论远程沙箱状态如何");
 

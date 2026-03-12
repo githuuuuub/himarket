@@ -189,7 +189,7 @@ himarket-bootstrap (入口点)
 - `Portal` / `PortalDomain` - 门户配置和自定义域名
 - `Gateway` - 网关配置（Higress、APIG 等）
 - `NacosInstance` - Nacos 服务发现配置
-- `K8sCluster` - Kubernetes 集群配置
+- `SandboxInstance` - Sandbox 实例（K8s 集群）配置
 
 **对话式 AI：**
 - `ChatSession` / `Chat` / `ChatAttachment` - AI 聊天会话和消息
