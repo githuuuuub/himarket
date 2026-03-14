@@ -112,6 +112,11 @@ function McpSquare() {
     if (activeTab === "my") fetchMyEndpoints();
   }, [activeTab, fetchMyEndpoints]);
 
+  // 广场 tab 也需要加载订阅状态
+  useEffect(() => {
+    if (activeTab === "market") fetchMyEndpoints();
+  }, [activeTab]);
+
   const loadMoreProducts = useCallback(async () => {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
@@ -166,6 +171,8 @@ function McpSquare() {
       message.error(error?.message || "取消订阅失败");
     }
   };
+
+  const subscribedProductIds = new Set(myEndpoints.map((e) => e.productId));
 
   return (
     <Layout>
@@ -240,8 +247,8 @@ function McpSquare() {
                   loading={loading}
                   loadingMore={loadingMore}
                   items={filteredItems}
+                  subscribedProductIds={subscribedProductIds}
                   onViewDetail={(pid) => navigate(`/mcp/${pid}`)}
-                  onTryNow={(product) => navigate("/chat", { state: { selectedProduct: product } })}
                 />
               ) : (
                 <MyMcpContent
@@ -262,12 +269,12 @@ function McpSquare() {
 }
 
 /* ==================== 广场内容 ==================== */
-function MarketContent({ loading, loadingMore, items, onViewDetail, onTryNow }: {
+function MarketContent({ loading, loadingMore, items, subscribedProductIds, onViewDetail }: {
   loading: boolean;
   loadingMore: boolean;
   items: McpProductItem[];
+  subscribedProductIds: Set<string>;
   onViewDetail: (productId: string) => void;
-  onTryNow: (product: IProductDetail) => void;
 }) {
   if (loading) {
     return <div className="flex items-center justify-center h-full"><Spin size="large" tip="加载中..." /></div>;
@@ -284,8 +291,8 @@ function MarketContent({ loading, loadingMore, items, onViewDetail, onTryNow }: 
           <McpCard
             key={item.product.productId}
             item={item}
+            subscribed={subscribedProductIds.has(item.product.productId)}
             onViewDetail={() => onViewDetail(item.product.productId)}
-            onTryNow={() => onTryNow(item.product)}
           />
         ))}
       </div>
@@ -297,10 +304,10 @@ function MarketContent({ loading, loadingMore, items, onViewDetail, onTryNow }: 
 }
 
 /* ==================== MCP 卡片（匹配 ModelCard 风格） ==================== */
-function McpCard({ item, onViewDetail, onTryNow }: {
+function McpCard({ item, subscribed, onViewDetail }: {
   item: McpProductItem;
+  subscribed: boolean;
   onViewDetail: () => void;
-  onTryNow: () => void;
 }) {
   const { product, meta } = item;
   const displayName = meta?.displayName || meta?.mcpName || product.name;
@@ -340,6 +347,14 @@ function McpCard({ item, onViewDetail, onTryNow }: {
         h-[200px] flex flex-col
       "
     >
+      {/* 已订阅角标 */}
+      {subscribed && (
+        <div className="absolute top-3 right-3 z-10">
+          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-100">
+            已订阅
+          </span>
+        </div>
+      )}
       {/* 头部：icon + 名称 + 标签 */}
       <div className="flex items-center gap-3 mb-3">
         <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-colorPrimary/10 to-colorPrimary/5 flex items-center justify-center flex-shrink-0 overflow-hidden">
@@ -351,6 +366,9 @@ function McpCard({ item, onViewDetail, onTryNow }: {
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="text-base font-semibold text-gray-900 truncate">{displayName}</h3>
+          {meta?.mcpName && (
+            <div className="text-[10px] text-gray-400 font-mono truncate mt-0.5">{meta.mcpName}</div>
+          )}
           <div className="flex items-center gap-1.5 mt-1">
             {protocolType && (
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-colorPrimary/10 text-colorPrimary">
@@ -403,12 +421,21 @@ function McpCard({ item, onViewDetail, onTryNow }: {
           >
             查看详情
           </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onTryNow(); }}
-            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-colorPrimary hover:opacity-90 transition-all duration-200 shadow-sm"
-          >
-            立即体验
-          </button>
+          {subscribed ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onViewDetail(); }}
+              className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-red-600 bg-white border border-red-300 hover:bg-red-50 hover:border-red-400 transition-all duration-200 shadow-sm"
+            >
+              取消订阅
+            </button>
+          ) : (
+            <button
+              onClick={(e) => { e.stopPropagation(); onViewDetail(); }}
+              className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-colorPrimary hover:opacity-90 transition-all duration-200 shadow-sm"
+            >
+              立即订阅
+            </button>
+          )}
         </div>
       </div>
     </div>

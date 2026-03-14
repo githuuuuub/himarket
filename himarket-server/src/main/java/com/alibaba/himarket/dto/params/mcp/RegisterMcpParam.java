@@ -56,4 +56,7 @@ public class RegisterMcpParam {
 
     /** JSON 字符串：工具配置 */
     private String toolsConfig;
+
+    /** 是否需要沙箱托管 */
+    private Boolean sandboxRequired;
 }

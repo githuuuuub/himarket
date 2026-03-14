@@ -82,4 +82,7 @@ public class SaveMcpMetaParam {
      * 创建者（外部系统可传入用户ID）
      */
     private String createdBy;
+
+    /** 是否需要沙箱托管 */
+    private Boolean sandboxRequired;
 }

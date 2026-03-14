@@ -59,7 +59,7 @@ class RuntimeControllerTest {
             remoteConfig.setHost("");
         }
         properties.setRemote(remoteConfig);
-        return new RuntimeSelector(properties, null);
+        return new RuntimeSelector(properties);
     }
 
     @Test

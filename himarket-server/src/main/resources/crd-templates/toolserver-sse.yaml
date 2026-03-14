@@ -17,7 +17,7 @@ spec:
 ${ACCESSES_YAML}
       artifact:
         repository:
-          image: registry.cn-hangzhou.aliyuncs.com/edas-test-ns/mcp-proxy-server:1.0.0
+          image: ${IMAGE}
         type: McpDefinition
       concurrency: 100
       idleTimeoutSeconds: 1800
@@ -28,16 +28,16 @@ ${ENV_YAML}
       protocol: ${PROTOCOL}
       resources:
         limits:
-          cpu: 500m
-          memory: 1Gi
+          cpu: ${CPU_LIMIT}
+          memory: ${MEMORY_LIMIT}
         requests:
-          cpu: 125m
-          memory: 256Mi
+          cpu: ${CPU_REQUEST}
+          memory: ${MEMORY_REQUEST}
       scaling:
         maxReplicas: 10
         minReplicas: 0
         scaleDownSeconds: 300
       storage:
         ephemeral:
-          capacity: 1Gi
+          capacity: ${EPHEMERAL_STORAGE}
       type: managed

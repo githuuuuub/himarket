@@ -121,6 +121,7 @@ function McpCreatePage() {
         connectionConfig: values.mcpConfigJson,
         extraParams: extraParams.length ? JSON.stringify(extraParams) : undefined,
         serviceIntro: values.serviceIntro,
+        sandboxRequired: values.sandboxRequired || false,
       });
 
       if (res.code === "SUCCESS") {
@@ -259,7 +260,7 @@ function McpCreatePage() {
               const selected = protocolType === p.key;
               return (
                 <div key={p.key}
-                  onClick={() => { form.setFieldsValue({ protocolType: p.key }); setExtraParams([]); }}
+                  onClick={() => { form.setFieldsValue({ protocolType: p.key, ...(p.key === "stdio" ? { sandboxRequired: true } : {}) }); setExtraParams([]); }}
                   className={`relative flex items-center gap-2.5 rounded-xl border px-4 py-3 cursor-pointer transition-all duration-200 ${
                     selected ? "border-colorPrimary bg-colorPrimary/5 ring-1 ring-colorPrimary/20" : "border-gray-200 hover:border-gray-300 hover:bg-gray-50/50"
                   }`}
@@ -271,6 +272,10 @@ function McpCreatePage() {
               );
             })}
           </div>
+        </Form.Item>
+
+        <Form.Item name="sandboxRequired" label="沙箱托管" valuePropName="checked" initialValue={true}>
+          <Switch checkedChildren="需要" unCheckedChildren="不需要" disabled={protocolType === "stdio"} />
         </Form.Item>
 
         <Form.Item name="mcpConfigJson" label="MCP 连接配置"
@@ -298,7 +303,7 @@ function McpCreatePage() {
                 const serverKey = Object.keys(servers)[0];
                 if (!serverKey) { message.error("未找到有效的 MCP Server 配置"); return; }
                 const cfg = servers[serverKey];
-                if (cfg.command) form.setFieldsValue({ protocolType: "stdio" });
+                if (cfg.command) form.setFieldsValue({ protocolType: "stdio", sandboxRequired: true });
                 else if (cfg.type === "sse") form.setFieldsValue({ protocolType: "sse" });
                 else form.setFieldsValue({ protocolType: "http" });
                 const params: ExtraParam[] = [];

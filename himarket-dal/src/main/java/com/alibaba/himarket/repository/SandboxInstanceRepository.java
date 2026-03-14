@@ -27,9 +27,7 @@ public interface SandboxInstanceRepository extends BaseRepository<SandboxInstanc
 
     Optional<SandboxInstance> findBySandboxId(String sandboxId);
 
-    Optional<SandboxInstance> findByAdminIdAndSandboxName(String adminId, String sandboxName);
-
-    Optional<SandboxInstance> findByApiServerAndNamespace(String apiServer, String namespace);
+    Optional<SandboxInstance> findBySandboxName(String sandboxName);
 
     long countByStatus(String status);
 

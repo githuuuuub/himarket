@@ -71,7 +71,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
@@ -89,10 +92,25 @@ public class McpServerServiceImpl implements McpServerService {
     private final NacosService nacosService;
     private final SandboxService sandboxService;
     private final McpSandboxDeployService mcpSandboxDeployService;
+    private final PlatformTransactionManager transactionManager;
 
     @Override
     @Transactional
     public McpMetaResult saveMeta(SaveMcpMetaParam param) {
+        // 自动推断 sandboxRequired：
+        // 1. stdio 协议强制需要沙箱托管
+        // 2. 网关/Nacos 导入默认不需要
+        // 3. 其他类型默认需要
+        String protocol = StrUtil.blankToDefault(param.getProtocolType(), "");
+        if (protocol.toLowerCase().contains("stdio")) {
+            param.setSandboxRequired(true);
+        } else if (param.getSandboxRequired() == null) {
+            String paramOrigin = StrUtil.blankToDefault(param.getOrigin(), "ADMIN");
+            param.setSandboxRequired(
+                    !"GATEWAY".equalsIgnoreCase(paramOrigin)
+                            && !"NACOS".equalsIgnoreCase(paramOrigin));
+        }
+
         // 查找是否已存在同 productId + mcpName 的记录
         McpServerMeta meta =
                 metaRepository
@@ -121,9 +139,10 @@ public class McpServerServiceImpl implements McpServerService {
                             .publishStatus(
                                     StrUtil.blankToDefault(param.getPublishStatus(), "DRAFT"))
                             .toolsConfig(param.getToolsConfig())
+                            .sandboxRequired(param.getSandboxRequired())
                             .createdBy(
                                     StrUtil.blankToDefault(
-                                            param.getCreatedBy(), contextHolder.getUser()))
+                                            param.getCreatedBy(), getCreatedByOrDefault()))
                             .build();
         } else {
             // 更新：只覆盖非 null 字段
@@ -146,6 +165,30 @@ public class McpServerServiceImpl implements McpServerService {
     @Override
     @Transactional
     public McpMetaResult registerMcp(RegisterMcpParam param) {
+        // 0. 非 stdio 协议校验：connectionConfig 必须包含可提取的连接地址
+        String protocol = param.getProtocolType();
+        if (!"stdio".equalsIgnoreCase(protocol)) {
+            String connCfg = param.getConnectionConfig();
+            if (StrUtil.isBlank(connCfg)) {
+                throw new BusinessException(
+                        ErrorCode.INVALID_REQUEST, "非 stdio 协议必须提供 connectionConfig（包含连接地址）");
+            }
+            try {
+                cn.hutool.json.JSONObject connJson = JSONUtil.parseObj(connCfg);
+                String url = extractEndpointUrl(connJson, param.getMcpName(), protocol);
+                if (StrUtil.isBlank(url)) {
+                    throw new BusinessException(
+                            ErrorCode.INVALID_REQUEST, "connectionConfig 中未找到有效的连接地址（url）");
+                }
+            } catch (BusinessException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new BusinessException(
+                        ErrorCode.INVALID_REQUEST,
+                        "connectionConfig 格式错误或缺少连接地址: " + e.getMessage());
+            }
+        }
+
         // 1. 自动创建 Product（以 mcpName 为名称）
         String productId = IdGenerator.genApiProductId();
         com.alibaba.himarket.entity.Product product =
@@ -191,6 +234,7 @@ public class McpServerServiceImpl implements McpServerService {
         metaParam.setPublishStatus(StrUtil.blankToDefault(param.getPublishStatus(), "PENDING"));
         metaParam.setToolsConfig(param.getToolsConfig());
         metaParam.setCreatedBy(param.getCreatedBy());
+        metaParam.setSandboxRequired(param.getSandboxRequired());
 
         return saveMeta(metaParam);
     }
@@ -391,25 +435,29 @@ public class McpServerServiceImpl implements McpServerService {
                             });
         }
 
-        // 网关来源：同步 consumer
+        // 网关来源：同步 consumer（挂起外层事务，避免内部异常标记 rollback-only）
         ProductRef productRef = productRefRepository.findByProductId(productId).orElse(null);
         if ("GATEWAY".equalsIgnoreCase(origin)
                 && productRef != null
                 && productRef.getSourceType() == SourceType.GATEWAY) {
+            TransactionTemplate gatewayTx = new TransactionTemplate(transactionManager);
+            gatewayTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_NOT_SUPPORTED);
             try {
-                ConsumerResult primaryConsumer = consumerService.getPrimaryConsumer();
-                CreateSubscriptionParam subParam = new CreateSubscriptionParam();
-                subParam.setProductId(productId);
-                consumerService.subscribeProduct(primaryConsumer.getConsumerId(), subParam);
-                log.info(
-                        "网关 consumer 同步成功: productId={}, consumerId={}",
-                        productId,
-                        primaryConsumer.getConsumerId());
-            } catch (BusinessException e) {
-                if (!e.getMessage().contains("Duplicate")) {
-                    throw e;
-                }
-                log.info("consumer 已订阅过该产品，跳过网关同步: productId={}", productId);
+                gatewayTx.executeWithoutResult(
+                        status -> {
+                            ConsumerResult primaryConsumer = consumerService.getPrimaryConsumer();
+                            CreateSubscriptionParam subParam = new CreateSubscriptionParam();
+                            subParam.setProductId(productId);
+                            consumerService.subscribeProduct(
+                                    primaryConsumer.getConsumerId(), subParam);
+                            log.info(
+                                    "网关 consumer 同步成功: productId={}, consumerId={}",
+                                    productId,
+                                    primaryConsumer.getConsumerId());
+                        });
+            } catch (Exception e) {
+                // 网关同步失败不影响 MCP 订阅主流程
+                log.info("网关 consumer 同步跳过: productId={}, reason={}", productId, e.getMessage());
             }
         }
 
@@ -446,7 +494,8 @@ public class McpServerServiceImpl implements McpServerService {
                             meta.getConnectionConfig(),
                             apiKey,
                             authType,
-                            param.getParams());
+                            param.getParams(),
+                            meta.getExtraParams());
 
             protocol = transportType;
             hostingType = "SANDBOX";
@@ -692,46 +741,49 @@ public class McpServerServiceImpl implements McpServerService {
      * 直接设为 APPROVED 状态；如果开了鉴权则保存 primary consumer 的 credential 信息。
      */
     private void syncProductSubscription(String productId, String userId, SubscribeMcpParam param) {
+        TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+        txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         try {
-            ConsumerResult primaryConsumer = consumerService.getPrimaryConsumer();
-            String consumerId = primaryConsumer.getConsumerId();
+            txTemplate.executeWithoutResult(
+                    status -> {
+                        ConsumerResult primaryConsumer = consumerService.getPrimaryConsumer();
+                        String consumerId = primaryConsumer.getConsumerId();
 
-            // 已存在则跳过
-            if (subscriptionRepository
-                    .findByConsumerIdAndProductId(consumerId, productId)
-                    .isPresent()) {
-                log.debug(
-                        "product_subscription 已存在，跳过: productId={}, consumerId={}",
-                        productId,
-                        consumerId);
-                return;
-            }
+                        // 已存在则跳过
+                        if (subscriptionRepository
+                                .findByConsumerIdAndProductId(consumerId, productId)
+                                .isPresent()) {
+                            log.debug(
+                                    "product_subscription 已存在，跳过: productId={}, consumerId={}",
+                                    productId,
+                                    consumerId);
+                            return;
+                        }
 
-            // 构建 consumerAuthConfig
-            ConsumerAuthConfig authConfig = null;
-            if (param != null && "bearer".equalsIgnoreCase(param.getAuthType())) {
-                authConfig =
-                        ConsumerAuthConfig.builder()
-                                .mcpAuthConfig(buildMcpAuthConfig(consumerId))
-                                .build();
-            }
+                        // 构建 consumerAuthConfig
+                        ConsumerAuthConfig authConfig = null;
+                        if (param != null && "bearer".equalsIgnoreCase(param.getAuthType())) {
+                            authConfig =
+                                    ConsumerAuthConfig.builder()
+                                            .mcpAuthConfig(buildMcpAuthConfig(consumerId))
+                                            .build();
+                        }
 
-            ProductSubscription subscription =
-                    ProductSubscription.builder()
-                            .subscriptionId(IdGenerator.genSubscriptionId())
-                            .productId(productId)
-                            .consumerId(consumerId)
-                            .status(SubscriptionStatus.APPROVED)
-                            .consumerAuthConfig(authConfig)
-                            .build();
+                        ProductSubscription subscription =
+                                ProductSubscription.builder()
+                                        .subscriptionId(IdGenerator.genSubscriptionId())
+                                        .productId(productId)
+                                        .consumerId(consumerId)
+                                        .status(SubscriptionStatus.APPROVED)
+                                        .consumerAuthConfig(authConfig)
+                                        .build();
 
-            subscriptionRepository.save(subscription);
-            log.info(
-                    "同步写入 product_subscription: productId={}, consumerId={}",
-                    productId,
-                    consumerId);
-        } catch (BusinessException e) {
-            throw e;
+                        subscriptionRepository.save(subscription);
+                        log.info(
+                                "同步写入 product_subscription: productId={}, consumerId={}",
+                                productId,
+                                consumerId);
+                    });
         } catch (Exception e) {
             log.warn("同步 product_subscription 失败（不影响 MCP 订阅）: {}", e.getMessage());
         }
@@ -891,7 +943,6 @@ public class McpServerServiceImpl implements McpServerService {
 
         // 网关/Nacos 导入：将拉取到的完整配置回写到 meta，供前端展示连接信息和工具列表
         if (refSourceType != SourceType.CUSTOM && StrUtil.isNotBlank(mcpConfigStr)) {
-            meta.setConnectionConfig(mcpConfigStr);
             try {
                 cn.hutool.json.JSONObject mcpJson = JSONUtil.parseObj(mcpConfigStr);
                 // 同步协议类型
@@ -904,7 +955,14 @@ public class McpServerServiceImpl implements McpServerService {
                 if (StrUtil.isNotBlank(tools) && StrUtil.isBlank(meta.getToolsConfig())) {
                     meta.setToolsConfig(tools);
                 }
-            } catch (Exception ignored) {
+                // 将网关 domains 格式转换为标准 mcpServers 格式存入 connectionConfig
+                String standardConfig =
+                        convertToStandardConnectionConfig(mcpJson, meta.getMcpName(), protocol);
+                meta.setConnectionConfig(
+                        StrUtil.isNotBlank(standardConfig) ? standardConfig : mcpConfigStr);
+            } catch (Exception e) {
+                log.warn("解析网关配置失败，保留原始格式: {}", e.getMessage());
+                meta.setConnectionConfig(mcpConfigStr);
             }
             metaRepository.save(meta);
         }
@@ -1019,6 +1077,104 @@ public class McpServerServiceImpl implements McpServerService {
             endpoint.setStatus("ACTIVE");
         }
         return endpointRepository.save(endpoint);
+    }
+
+    /**
+     * 将网关/Nacos 返回的原始配置转换为标准 mcpServers 格式。
+     * 网关格式：{ mcpServerConfig: { domains: [...], path: "..." }, meta: { protocol: "sse" } }
+     * Nacos 格式：{ mcpServerConfig: { rawConfig: {...} } }
+     * 转换后：{ "mcpServers": { "name": { "url": "...", "type": "sse" } } }
+     *
+     * @return 标准格式 JSON 字符串，无法转换时返回 null
+     */
+    private String convertToStandardConnectionConfig(
+            cn.hutool.json.JSONObject mcpJson, String mcpName, String protocol) {
+        String serverName =
+                StrUtil.blankToDefault(mcpName, "mcp-server")
+                        .toLowerCase()
+                        .replaceAll("[^a-z0-9-]", "-");
+
+        // Nacos rawConfig：已经是标准格式，直接包装
+        cn.hutool.json.JSONObject serverConfig = mcpJson.getJSONObject("mcpServerConfig");
+        if (serverConfig != null && serverConfig.get("rawConfig") != null) {
+            Object rawConfig = serverConfig.get("rawConfig");
+            cn.hutool.json.JSONObject rawJson;
+            try {
+                rawJson =
+                        rawConfig instanceof cn.hutool.json.JSONObject
+                                ? (cn.hutool.json.JSONObject) rawConfig
+                                : JSONUtil.parseObj(rawConfig.toString());
+            } catch (Exception e) {
+                return null;
+            }
+            // rawConfig 本身可能已经是 mcpServers 格式
+            if (rawJson.containsKey("mcpServers")) {
+                return rawJson.toString();
+            }
+            // 单 server 格式（有 command 或 url）
+            return JSONUtil.createObj()
+                    .set("mcpServers", JSONUtil.createObj().set(serverName, rawJson))
+                    .toString();
+        }
+
+        // 网关 domains 格式：解析 domains 拼接 URL
+        if (serverConfig != null && serverConfig.getJSONArray("domains") != null) {
+            cn.hutool.json.JSONArray domains = serverConfig.getJSONArray("domains");
+            if (domains.isEmpty()) return null;
+
+            // 优先取非 intranet 的 domain
+            cn.hutool.json.JSONObject domain = null;
+            for (int i = 0; i < domains.size(); i++) {
+                cn.hutool.json.JSONObject d = domains.getJSONObject(i);
+                if (!"intranet".equalsIgnoreCase(d.getStr("networkType"))) {
+                    domain = d;
+                    break;
+                }
+            }
+            if (domain == null) domain = domains.getJSONObject(0);
+
+            String scheme = StrUtil.blankToDefault(domain.getStr("protocol"), "https");
+            String host = domain.getStr("domain");
+            Integer port = domain.getInt("port");
+            String path = serverConfig.getStr("path", "");
+
+            if (StrUtil.isBlank(host)) return null;
+
+            StringBuilder urlBuilder = new StringBuilder(scheme).append("://").append(host);
+            if (port != null && port > 0 && port != 443 && port != 80) {
+                urlBuilder.append(":").append(port);
+            }
+            if (StrUtil.isNotBlank(path)) {
+                if (!path.startsWith("/")) urlBuilder.append("/");
+                urlBuilder.append(path);
+            }
+
+            String url = urlBuilder.toString();
+            boolean isSse = "sse".equalsIgnoreCase(protocol);
+            if (isSse && !url.endsWith("/sse")) {
+                url = url.endsWith("/") ? url + "sse" : url + "/sse";
+            }
+
+            cn.hutool.json.JSONObject serverEntry = JSONUtil.createObj().set("url", url);
+            if (isSse) serverEntry.set("type", "sse");
+
+            return JSONUtil.createObj()
+                    .set("mcpServers", JSONUtil.createObj().set(serverName, serverEntry))
+                    .toString();
+        }
+
+        return null;
+    }
+
+    /**
+     * 获取 createdBy：优先从 SecurityContext 取当前用户，无登录态时返回 "open-api"。
+     */
+    private String getCreatedByOrDefault() {
+        try {
+            return contextHolder.getUser();
+        } catch (Exception e) {
+            return "open-api";
+        }
     }
 
     /**

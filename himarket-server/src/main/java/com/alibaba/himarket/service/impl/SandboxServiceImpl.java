@@ -58,6 +58,31 @@ public class SandboxServiceImpl implements SandboxService {
 
     private final SandboxInstanceRepository sandboxInstanceRepository;
     private final ContextHolder contextHolder;
+    private final com.alibaba.himarket.service.sandbox.SandboxHealthCheckTask healthCheckTask;
+
+    @Override
+    public List<SandboxSimpleResult> listMcpCapableSandboxes() {
+        return sandboxInstanceRepository.findByStatus("RUNNING").stream()
+                .filter(
+                        s -> {
+                            if (StrUtil.isBlank(s.getExtraConfig())) return false;
+                            try {
+                                cn.hutool.json.JSONObject json =
+                                        JSONUtil.parseObj(s.getExtraConfig());
+                                cn.hutool.json.JSONArray caps = json.getJSONArray("capabilities");
+                                return caps != null && caps.contains("MCP_HOSTING");
+                            } catch (Exception e) {
+                                return false;
+                            }
+                        })
+                .map(
+                        s ->
+                                SandboxSimpleResult.builder()
+                                        .sandboxId(s.getSandboxId())
+                                        .sandboxName(s.getSandboxName())
+                                        .build())
+                .collect(Collectors.toList());
+    }
 
     @Override
     public List<SandboxSimpleResult> listActiveSandboxes() {
@@ -90,17 +115,14 @@ public class SandboxServiceImpl implements SandboxService {
     public void importSandbox(ImportSandboxParam param) {
         String adminId = contextHolder.getUser();
 
-        // 检查同名实例
+        // 检查同名实例（全局唯一）
         sandboxInstanceRepository
-                .findByAdminIdAndSandboxName(adminId, param.getSandboxName())
+                .findBySandboxName(param.getSandboxName())
                 .ifPresent(
                         existing -> {
                             throw new BusinessException(
                                     ErrorCode.CONFLICT,
-                                    StrUtil.format(
-                                            "{}:{}已存在",
-                                            Resources.SANDBOX_INSTANCE,
-                                            param.getSandboxName()));
+                                    StrUtil.format("实例名称'{}'已存在", param.getSandboxName()));
                         });
 
         // 从KubeConfig连接集群获取信息
@@ -109,26 +131,15 @@ public class SandboxServiceImpl implements SandboxService {
             String apiServer = K8sClientUtils.getApiServer(client);
             String clusterAttribute = buildClusterAttribute(client);
 
-            // 检查同集群同namespace
-            sandboxInstanceRepository
-                    .findByApiServerAndNamespace(apiServer, param.getNamespace())
-                    .ifPresent(
-                            existing -> {
-                                throw new BusinessException(
-                                        ErrorCode.CONFLICT,
-                                        StrUtil.format(
-                                                "集群{}下Namespace'{}'已被实例'{}'使用",
-                                                apiServer,
-                                                param.getNamespace(),
-                                                existing.getSandboxName()));
-                            });
-
             SandboxInstance sandbox = param.convertTo();
             sandbox.setSandboxId(IdGenerator.genSandboxId());
             sandbox.setAdminId(adminId);
             sandbox.setApiServer(apiServer);
             sandbox.setClusterAttribute(clusterAttribute);
             sandbox.setStatus("RUNNING");
+            sandbox.setExtraConfig(
+                    buildExtraConfig(
+                            param.getResourceSpec(), param.getImage(), param.getCapabilities()));
 
             sandboxInstanceRepository.save(sandbox);
         } catch (BusinessException e) {
@@ -146,12 +157,11 @@ public class SandboxServiceImpl implements SandboxService {
     public void updateSandbox(String sandboxId, UpdateSandboxParam param) {
         SandboxInstance sandbox = findSandbox(sandboxId);
 
-        // 如果修改了名称，检查是否重复
+        // 如果修改了名称，检查是否重复（全局唯一）
         if (StrUtil.isNotBlank(param.getSandboxName())
                 && !StrUtil.equals(sandbox.getSandboxName(), param.getSandboxName())) {
-            String adminId = contextHolder.getUser();
             sandboxInstanceRepository
-                    .findByAdminIdAndSandboxName(adminId, param.getSandboxName())
+                    .findBySandboxName(param.getSandboxName())
                     .ifPresent(
                             existing -> {
                                 throw new BusinessException(
@@ -162,7 +172,6 @@ public class SandboxServiceImpl implements SandboxService {
 
         // 如果更新了KubeConfig，重新获取集群信息
         if (StrUtil.isNotBlank(param.getKubeConfig())) {
-            // 旧kubeConfig的缓存失效
             if (StrUtil.isNotBlank(sandbox.getKubeConfig())) {
                 K8sClientUtils.evictClient(sandbox.getKubeConfig());
             }
@@ -178,28 +187,15 @@ public class SandboxServiceImpl implements SandboxService {
             }
         }
 
-        // 检查同集群同namespace（用更新后的值）
-        String checkApiServer = sandbox.getApiServer();
-        String checkNamespace =
-                StrUtil.isNotBlank(param.getNamespace())
-                        ? param.getNamespace()
-                        : sandbox.getNamespace();
-        sandboxInstanceRepository
-                .findByApiServerAndNamespace(checkApiServer, checkNamespace)
-                .ifPresent(
-                        existing -> {
-                            if (!existing.getSandboxId().equals(sandbox.getSandboxId())) {
-                                throw new BusinessException(
-                                        ErrorCode.CONFLICT,
-                                        StrUtil.format(
-                                                "集群{}下Namespace'{}'已被实例'{}'使用",
-                                                checkApiServer,
-                                                checkNamespace,
-                                                existing.getSandboxName()));
-                            }
-                        });
-
         param.update(sandbox);
+        // 更新资源规格/镜像/功能到 extraConfig
+        if (param.getResourceSpec() != null
+                || param.getImage() != null
+                || param.getCapabilities() != null) {
+            sandbox.setExtraConfig(
+                    buildExtraConfig(
+                            param.getResourceSpec(), param.getImage(), param.getCapabilities()));
+        }
         try {
             sandboxInstanceRepository.saveAndFlush(sandbox);
         } catch (DataIntegrityViolationException e) {
@@ -215,6 +211,15 @@ public class SandboxServiceImpl implements SandboxService {
             K8sClientUtils.evictClient(sandbox.getKubeConfig());
         }
         sandboxInstanceRepository.delete(sandbox);
+    }
+
+    @Override
+    public SandboxResult healthCheck(String sandboxId) {
+        SandboxInstance sandbox = findSandbox(sandboxId);
+        healthCheckTask.checkOne(sandbox);
+        // 重新读取更新后的状态
+        sandbox = findSandbox(sandboxId);
+        return new SandboxResult().convertFrom(sandbox);
     }
 
     @Override
@@ -274,5 +279,22 @@ public class SandboxServiceImpl implements SandboxService {
 
             return cb.and(predicates.toArray(new Predicate[0]));
         };
+    }
+
+    private String buildExtraConfig(
+            ImportSandboxParam.ResourceSpec resourceSpec,
+            String image,
+            java.util.List<String> capabilities) {
+        cn.hutool.json.JSONObject json = JSONUtil.createObj();
+        if (resourceSpec != null) {
+            json.set("resourceSpec", JSONUtil.parse(JSONUtil.toJsonStr(resourceSpec)));
+        }
+        if (StrUtil.isNotBlank(image)) {
+            json.set("image", image);
+        }
+        if (capabilities != null && !capabilities.isEmpty()) {
+            json.set("capabilities", capabilities);
+        }
+        return json.isEmpty() ? null : json.toString();
     }
 }

@@ -51,5 +51,9 @@ public class SandboxResult implements OutputConverter<SandboxResult, SandboxInst
 
     private String status;
 
+    private String statusMessage;
+
+    private LocalDateTime lastCheckedAt;
+
     private LocalDateTime createAt;
 }

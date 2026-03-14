@@ -33,4 +33,13 @@ public class UpdateSandboxParam implements InputConverter<SandboxInstance> {
     private String namespace;
 
     private String description;
+
+    /** 资源规格配置 */
+    private ImportSandboxParam.ResourceSpec resourceSpec;
+
+    /** 沙箱容器镜像 */
+    private String image;
+
+    /** 沙箱提供的功能列表 */
+    private java.util.List<String> capabilities;
 }

@@ -77,4 +77,11 @@ public class SandboxController {
     public ClusterInfoResult fetchClusterInfo(@RequestBody @Valid ClusterInfoParam param) {
         return sandboxService.fetchClusterInfo(param.getKubeConfig());
     }
+
+    @Operation(summary = "手动触发单个沙箱健康检查")
+    @PostMapping("/{sandboxId}/health-check")
+    @AdminAuth
+    public SandboxResult healthCheck(@PathVariable String sandboxId) {
+        return sandboxService.healthCheck(sandboxId);
+    }
 }

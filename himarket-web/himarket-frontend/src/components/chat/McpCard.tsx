@@ -4,6 +4,7 @@ import { ProductIconRenderer } from "../icon/ProductIconRenderer";
 import { getIconString } from "../../lib/iconUtils";
 import APIs, { type IProductDetail, type IMcpTool } from "../../lib/apis";
 import { More } from "../icon";
+import McpDetailModal from "./McpDetailModal";
 
 interface McpCardProps {
   data: IProductDetail;
@@ -25,6 +26,7 @@ function McpCard(props: McpCardProps) {
   const [toolsLoading, setToolsLoading] = useState(false);
   const [tools, setTools] = useState<IMcpTool[]>([]);
   const [popoverVisible, setPopoverVisible] = useState(false);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
 
   // 加载工具列表
   const loadTools = async () => {
@@ -66,6 +68,7 @@ function McpCard(props: McpCardProps) {
 
 
   return (
+    <>
     <div
       className="
         bg-white/60 backdrop-blur-sm rounded-2xl p-5
@@ -175,14 +178,23 @@ function McpCard(props: McpCardProps) {
           <div className="flex gap-2 justify-between w-full">
             <Button
               className="flex-1"
-              onClick={handleQuickSubscribe}
+              onClick={() => setDetailModalOpen(true)}
             >
-              快速订阅
+              去订阅
             </Button>
           </div>
         )}
       </div>
     </div >
+    <McpDetailModal
+      open={detailModalOpen}
+      product={data}
+      onClose={() => setDetailModalOpen(false)}
+      onSubscribed={() => {
+        onQuickSubscribe?.(data);
+      }}
+    />
+    </>
   );
 }
 

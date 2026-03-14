@@ -168,19 +168,17 @@ export function ChatArea(props: ChatAreaProps) {
 
   const handleQuickSubscribe = useCallback((product: IProductDetail) => {
     if (!primaryConsumer.current) return;
+    // 弹窗内已完成 MCP endpoint 订阅，这里补充 consumer 订阅 + 刷新列表
     APIs.subscribeProduct(primaryConsumer.current.consumerId, product.productId)
       .then(({ data }) => {
         if (data) {
-          message.success("订阅成功")
           APIs.getConsumerSubscriptions(data.consumerId, { size: 1000 })
             .then(({ data }) => {
               setMcpSubscripts(data.content);
             })
-        } else {
-          message.error("订阅失败")
         }
       }).catch(() => {
-        message.error("订阅失败")
+        // consumer 订阅失败不影响，MCP endpoint 已订阅成功
       })
   }, []);
 

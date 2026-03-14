@@ -45,7 +45,8 @@ public class McpSandboxDeployServiceImpl implements McpSandboxDeployService {
             String connectionConfig,
             String apiKey,
             String authType,
-            String userParams) {
+            String userParams,
+            String extraParamsDef) {
         SandboxInstance sandbox =
                 sandboxInstanceRepository
                         .findBySandboxId(sandboxId)
@@ -75,7 +76,8 @@ public class McpSandboxDeployServiceImpl implements McpSandboxDeployService {
                 connectionConfig,
                 apiKey,
                 authType,
-                userParams);
+                userParams,
+                extraParamsDef);
     }
 
     @Override

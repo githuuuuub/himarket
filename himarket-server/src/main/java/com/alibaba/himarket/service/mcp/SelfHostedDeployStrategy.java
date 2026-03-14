@@ -26,7 +26,8 @@ public class SelfHostedDeployStrategy implements McpSandboxDeployStrategy {
             String connectionConfig,
             String apiKey,
             String authType,
-            String userParams) {
+            String userParams,
+            String extraParamsDef) {
         // TODO: 实现 SELF_HOSTED 类型沙箱的部署逻辑
         throw new UnsupportedOperationException(
                 "SELF_HOSTED 类型沙箱暂不支持 MCP 部署，请使用 AGENT_RUNTIME 类型沙箱");

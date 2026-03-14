@@ -101,4 +101,7 @@ public class McpServerMeta extends BaseEntity {
 
     @Column(name = "created_by", length = 64)
     private String createdBy;
+
+    @Column(name = "sandbox_required")
+    private Boolean sandboxRequired;
 }

@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.*;
  *
  * <p>鉴权方式：请求头 X-API-Key，值需与配置项 open-api.api-key 一致。
  *
- * <p>查询接口不暴露 productId、connectionConfig 等内部/敏感字段：
+ * <p>查询接口不暴露 productId 等内部字段：
  * <ul>
  *   <li>列表接口返回 {@link McpMetaSimpleResult}（精简）</li>
  *   <li>详情接口返回 {@link McpMetaDetailResult}（完整但脱敏）</li>

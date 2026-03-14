@@ -293,19 +293,7 @@ export const nacosApi = {
   // 获取指定 Nacos 实例的命名空间列表
   getNamespaces: (nacosId: string, params?: { page?: number; size?: number }) => {
     return api.get(`/nacos/${nacosId}/namespaces`, { params })
-  },
-  // 获取默认 Nacos 实例
-  getDefaultNacos: () => {
-    return api.get(`/nacos/default`)
-  },
-  // 设置默认 Nacos 实例
-  setDefaultNacos: (nacosId: string) => {
-    return api.put(`/nacos/${nacosId}/default`)
-  },
-  // 设置默认命名空间
-  setDefaultNamespace: (nacosId: string, namespaceId: string) => {
-    return api.put(`/nacos/${nacosId}/default-namespace`, null, { params: { namespaceId } })
-  },
+  }
 }
 
 export const skillApi = {
@@ -320,7 +308,10 @@ export const skillApi = {
   getSkillFiles: (productId: string) => api.get(`/skills/${productId}/files`),
   getSkillFileContent: (productId: string, filePath: string) =>
     api.get(`/skills/${productId}/files/${filePath}`),
-
+  updateSkillMd: (productId: string, content: string) =>
+    api.put(`/skills/${productId}/skill-md`, content, {
+      headers: { 'Content-Type': 'text/plain' },
+    }),
 }
 
 // MCP Server 管理 API
@@ -346,6 +337,7 @@ export const mcpServerApi = {
     visibility?: string
     publishStatus?: string
     toolsConfig?: string
+    sandboxRequired?: boolean
   }) => {
     return api.post(`/mcp-servers/meta`, data)
   },
@@ -398,11 +390,11 @@ export const sandboxApi = {
     return api.get(`/sandboxes`, { params })
   },
   // 导入沙箱实例
-  importSandbox: (data: { sandboxName: string; sandboxType: string; kubeConfig: string; namespace: string; description?: string }) => {
+  importSandbox: (data: { sandboxName: string; sandboxType: string; kubeConfig: string; namespace: string; description?: string; resourceSpec?: any; image?: string; capabilities?: string[] }) => {
     return api.post(`/sandboxes`, data)
   },
   // 更新沙箱实例
-  updateSandbox: (sandboxId: string, data: { sandboxName?: string; kubeConfig?: string; namespace?: string; description?: string }) => {
+  updateSandbox: (sandboxId: string, data: { sandboxName?: string; kubeConfig?: string; namespace?: string; description?: string; resourceSpec?: any; image?: string; capabilities?: string[] }) => {
     return api.put(`/sandboxes/${sandboxId}`, data)
   },
   // 删除沙箱实例
@@ -412,5 +404,9 @@ export const sandboxApi = {
   // 获取集群信息
   fetchClusterInfo: (kubeConfig: string) => {
     return api.post(`/sandboxes/cluster-info`, { kubeConfig })
+  },
+  // 手动触发健康检查
+  healthCheck: (sandboxId: string) => {
+    return api.post(`/sandboxes/${sandboxId}/health-check`)
   },
 }

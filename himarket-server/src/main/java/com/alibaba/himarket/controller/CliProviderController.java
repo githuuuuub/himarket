@@ -14,17 +14,17 @@ import com.alibaba.himarket.dto.result.common.PageResult;
 import com.alibaba.himarket.dto.result.consumer.ConsumerCredentialResult;
 import com.alibaba.himarket.dto.result.consumer.ConsumerResult;
 import com.alibaba.himarket.dto.result.consumer.CredentialContext;
+import com.alibaba.himarket.dto.result.mcp.MyEndpointResult;
 import com.alibaba.himarket.dto.result.model.ModelConfigResult;
 import com.alibaba.himarket.dto.result.product.ProductResult;
 import com.alibaba.himarket.dto.result.product.SubscriptionResult;
 import com.alibaba.himarket.service.ConsumerService;
+import com.alibaba.himarket.service.McpServerService;
 import com.alibaba.himarket.service.ProductService;
 import com.alibaba.himarket.service.hicoding.cli.ProtocolTypeMapper;
 import com.alibaba.himarket.service.hicoding.filesystem.BaseUrlExtractor;
 import com.alibaba.himarket.service.hicoding.sandbox.SandboxType;
-import com.alibaba.himarket.support.chat.mcp.MCPTransportConfig;
 import com.alibaba.himarket.support.consumer.ApiKeyConfig;
-import com.alibaba.himarket.support.enums.MCPTransportMode;
 import com.alibaba.himarket.support.enums.ProductStatus;
 import com.alibaba.himarket.support.enums.ProductType;
 import com.alibaba.himarket.support.enums.SubscriptionStatus;
@@ -54,6 +54,7 @@ public class CliProviderController {
     private final AcpProperties acpProperties;
     private final ConsumerService consumerService;
     private final ProductService productService;
+    private final McpServerService mcpServerService;
     private final ContextHolder contextHolder;
 
     @Operation(summary = "获取当前开发者已订阅的模型市场模型列表")
@@ -129,67 +130,48 @@ public class CliProviderController {
     @GetMapping("/market-mcps")
     @DeveloperAuth
     public MarketMcpsResponse listMarketMcps() {
-        // 1. 获取 Primary Consumer
-        ConsumerResult consumer;
-        try {
-            consumer = consumerService.getPrimaryConsumer();
-        } catch (Exception e) {
-            logger.debug("No primary consumer found for current developer: {}", e.getMessage());
-            return MarketMcpsResponse.builder()
-                    .mcpServers(Collections.emptyList())
-                    .authHeaders(null)
-                    .build();
-        }
+        String userId = contextHolder.getUser();
 
-        String consumerId = consumer.getConsumerId();
+        // 从 endpoint 热数据表获取用户订阅的所有 MCP（包括沙箱部署的）
+        List<MyEndpointResult> myEndpoints = mcpServerService.listMyEndpoints();
 
-        // 2. 获取订阅列表，筛选 APPROVED 状态
-        List<SubscriptionResult> subscriptions =
-                consumerService.listConsumerSubscriptions(consumerId);
-        List<SubscriptionResult> approvedSubscriptions =
-                subscriptions.stream()
-                        .filter(s -> SubscriptionStatus.APPROVED.name().equals(s.getStatus()))
-                        .collect(Collectors.toList());
-
-        if (approvedSubscriptions.isEmpty()) {
-            return MarketMcpsResponse.builder()
-                    .mcpServers(Collections.emptyList())
-                    .authHeaders(extractAuthHeaders())
-                    .build();
-        }
-
-        // 3. 批量获取产品详情，筛选 MCP_SERVER 类型
-        List<String> productIds =
-                approvedSubscriptions.stream()
-                        .map(SubscriptionResult::getProductId)
-                        .collect(Collectors.toList());
-        Map<String, ProductResult> productMap = productService.getProducts(productIds);
-
-        // 4. 对每个产品提取 MCP 信息
         List<MarketMcpInfo> mcpServers = new ArrayList<>();
-        for (SubscriptionResult subscription : approvedSubscriptions) {
-            ProductResult product = productMap.get(subscription.getProductId());
-            if (product == null) {
-                logger.warn(
-                        "Product not found for subscription: productId={}",
-                        subscription.getProductId());
+        List<String> productIds = new ArrayList<>();
+
+        for (MyEndpointResult ep : myEndpoints) {
+            if (!"ACTIVE".equalsIgnoreCase(ep.getStatus())) {
+                continue;
+            }
+            if (cn.hutool.core.util.StrUtil.isBlank(ep.getEndpointUrl())) {
                 continue;
             }
 
-            if (product.getType() != ProductType.MCP_SERVER) {
-                continue;
-            }
+            String protocol =
+                    cn.hutool.core.util.StrUtil.blankToDefault(
+                            ep.getProtocol(), ep.getProtocolType());
+            String transportType =
+                    ("HTTP".equalsIgnoreCase(protocol)
+                                    || "StreamableHTTP".equalsIgnoreCase(protocol))
+                            ? "streamable-http"
+                            : "sse";
 
-            MarketMcpInfo mcpInfo = buildMarketMcpInfo(product);
-            if (mcpInfo != null) {
-                mcpServers.add(mcpInfo);
+            mcpServers.add(
+                    MarketMcpInfo.builder()
+                            .productId(ep.getProductId())
+                            .name(ep.getMcpName())
+                            .url(ep.getEndpointUrl())
+                            .transportType(transportType)
+                            .description(ep.getDescription())
+                            .build());
+
+            if (ep.getProductId() != null) {
+                productIds.add(ep.getProductId());
             }
         }
 
-        // 5. 获取 CredentialContext 提取 authHeaders
+        // 获取认证头
         Map<String, String> authHeaders = extractAuthHeaders();
 
-        // 6. 组装响应
         return MarketMcpsResponse.builder().mcpServers(mcpServers).authHeaders(authHeaders).build();
     }
 
@@ -230,49 +212,6 @@ public class CliProviderController {
             return headers.isEmpty() ? null : headers;
         } catch (Exception e) {
             logger.debug("Failed to get auth headers: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    private MarketMcpInfo buildMarketMcpInfo(ProductResult product) {
-        if (product.getMcpConfig() == null) {
-            logger.warn(
-                    "Product mcpConfig is incomplete, skipping: productId={}, name={}",
-                    product.getProductId(),
-                    product.getName());
-            return null;
-        }
-
-        try {
-            MCPTransportConfig transportConfig = product.getMcpConfig().toTransportConfig();
-            if (transportConfig == null) {
-                logger.warn(
-                        "Failed to extract transport config from product, skipping: productId={},"
-                                + " name={}",
-                        product.getProductId(),
-                        product.getName());
-                return null;
-            }
-
-            String transportType =
-                    transportConfig.getTransportMode() == MCPTransportMode.STREAMABLE_HTTP
-                            ? "streamable-http"
-                            : "sse";
-
-            return MarketMcpInfo.builder()
-                    .productId(product.getProductId())
-                    .name(transportConfig.getMcpServerName())
-                    .url(transportConfig.getUrl())
-                    .transportType(transportType)
-                    .description(product.getDescription())
-                    .build();
-        } catch (Exception e) {
-            logger.warn(
-                    "Error processing mcpConfig for product, skipping: productId={}, name={},"
-                            + " error={}",
-                    product.getProductId(),
-                    product.getName(),
-                    e.getMessage());
             return null;
         }
     }

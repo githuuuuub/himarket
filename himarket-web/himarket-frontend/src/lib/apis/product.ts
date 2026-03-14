@@ -93,6 +93,7 @@ export interface IMcpMeta {
   visibility: string;
   publishStatus: string;
   toolsConfig: string;
+  sandboxRequired: boolean;
   createdBy: string;
   createAt: string;
 }
@@ -301,6 +302,7 @@ export interface IRegisterMcpParam {
   connectionConfig: string;
   extraParams?: string;
   serviceIntro?: string;
+  sandboxRequired?: boolean;
 }
 
 export function registerMcp(data: IRegisterMcpParam) {

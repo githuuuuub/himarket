@@ -531,7 +531,7 @@ public class HiCodingWebSocketHandler extends TextWebSocketHandler {
         config.setEnv(processEnv);
 
         if (sandboxType == SandboxType.REMOTE) {
-            logger.info("Remote runtime: host={}", properties.getRemote().getHost());
+            logger.info("Remote runtime: sandboxType={}", sandboxType);
         }
 
         return config;

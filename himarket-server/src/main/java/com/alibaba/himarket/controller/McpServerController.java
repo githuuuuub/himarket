@@ -111,10 +111,10 @@ public class McpServerController {
         return mcpServerService.listPublishedMcpServers(pageable);
     }
 
-    @Operation(summary = "可用沙箱列表（Portal 端，只返回 id 和名称）")
+    @Operation(summary = "可用沙箱列表（Portal 端，只返回支持 MCP 托管且状态正常的沙箱）")
     @GetMapping("/sandboxes")
-    public List<SandboxSimpleResult> listActiveSandboxes() {
-        return sandboxService.listActiveSandboxes();
+    public List<SandboxSimpleResult> listMcpCapableSandboxes() {
+        return sandboxService.listMcpCapableSandboxes();
     }
 
     @Operation(summary = "订阅 MCP Server：统一入口，支持直连和沙箱场景")

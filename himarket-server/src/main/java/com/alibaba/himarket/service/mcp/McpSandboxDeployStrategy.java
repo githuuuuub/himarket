@@ -25,6 +25,8 @@ public interface McpSandboxDeployStrategy {
      * @param connectionConfig MCP 冷数据中的连接配置 JSON
      * @param apiKey          用户的 API Key（consumer credential token）
      * @param authType        鉴权方式：none / bearer
+     * @param userParams      用户提交的参数值 JSON
+     * @param extraParamsDef  额外参数定义 JSON（含 position 信息）
      * @return endpoint URL
      */
     String deploy(
@@ -36,7 +38,8 @@ public interface McpSandboxDeployStrategy {
             String connectionConfig,
             String apiKey,
             String authType,
-            String userParams);
+            String userParams,
+            String extraParamsDef);
 
     /**
      * 删除沙箱集群中的 ToolServer CRD。

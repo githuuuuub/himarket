@@ -78,7 +78,6 @@ export const router = createBrowserRouter([
         path: 'observability/mcp-monitor',
         element: <McpMonitor />,
       },
-
       {
         path: '*',
         element: <Navigate to="/portals" replace />,

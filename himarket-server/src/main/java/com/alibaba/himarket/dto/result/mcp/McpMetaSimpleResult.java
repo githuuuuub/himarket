@@ -25,6 +25,7 @@ public class McpMetaSimpleResult {
     private String origin;
     private String tags;
     private String publishStatus;
+    private Boolean sandboxRequired;
     private LocalDateTime createAt;
 
     public static McpMetaSimpleResult fromFull(McpMetaResult full) {
@@ -38,6 +39,7 @@ public class McpMetaSimpleResult {
                 .origin(full.getOrigin())
                 .tags(full.getTags())
                 .publishStatus(full.getPublishStatus())
+                .sandboxRequired(full.getSandboxRequired())
                 .createAt(full.getCreateAt())
                 .build();
     }

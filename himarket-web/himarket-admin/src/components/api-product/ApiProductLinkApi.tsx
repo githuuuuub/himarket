@@ -1,11 +1,16 @@
-import { Card, Button, Modal, Form, Select, message, Collapse, Tabs, Row, Col } from 'antd'
-import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined, CopyOutlined, CloudUploadOutlined, SettingOutlined, RocketOutlined } from '@ant-design/icons'
+import { Card, Button, Modal, Form, Select, message, Collapse, Tabs, Row, Col, Tag } from 'antd'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeHighlight from 'rehype-highlight'
+import 'highlight.js/styles/github.css'
+import 'github-markdown-css/github-markdown-light.css'
+import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined, CopyOutlined, CloudUploadOutlined, SettingOutlined } from '@ant-design/icons'
 import { useState, useEffect } from 'react'
 import type { ApiProduct, LinkedService, RestAPIItem, NacosMCPItem, APIGAIMCPItem, AIGatewayAgentItem, AIGatewayModelItem, ApiItem, AdpAIGatewayModelItem, ApsaraGatewayModelItem } from '@/types/api-product'
 import type { Gateway, NacosInstance } from '@/types/gateway'
 import { apiProductApi, gatewayApi, nacosApi, mcpServerApi } from '@/lib/api'
 import { getGatewayTypeLabel } from '@/lib/constant'
-import { copyToClipboard, formatDomainWithPort } from '@/lib/utils'
+import { copyToClipboard, formatDomainWithPort, formatDateTime } from '@/lib/utils'
 import * as yaml from 'js-yaml'
 import { SwaggerUIWrapper } from './SwaggerUIWrapper'
 import { McpCustomConfigModal } from './McpCustomConfigModal'
@@ -21,7 +26,6 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
   // 移除了内部的 linkedService 状态，现在从 props 接收
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [isCustomConfigModalVisible, setIsCustomConfigModalVisible] = useState(false)
-  const [isAgentRuntimeModalVisible, setIsAgentRuntimeModalVisible] = useState(false)
   const [form] = Form.useForm()
   const [gateways, setGateways] = useState<Gateway[]>([])
   const [nacosInstances, setNacosInstances] = useState<NacosInstance[]>([])
@@ -897,6 +901,59 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
                   <span className="col-span-5 text-xs text-gray-700 leading-relaxed">{meta.description}</span>
                 </div>
               )}
+              {meta.tags && (() => {
+                try {
+                  const tags = JSON.parse(meta.tags)
+                  return Array.isArray(tags) && tags.length > 0 ? (
+                    <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                      <span className="text-xs text-gray-600">标签:</span>
+                      <div className="col-span-5 flex flex-wrap gap-1">
+                        {tags.map((tag: string) => (
+                          <Tag key={tag} color="blue" className="m-0">{tag}</Tag>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null
+                } catch { return null }
+              })()}
+              {meta.icon && (
+                <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                  <span className="text-xs text-gray-600">图标:</span>
+                  <div className="col-span-2">
+                    {(() => {
+                      try {
+                        const iconObj = JSON.parse(meta.icon)
+                        const src = iconObj.type === 'BASE64' ? iconObj.data : iconObj.url
+                        return src ? <img src={src} alt="icon" className="w-8 h-8 rounded object-cover" /> : <span className="text-xs text-gray-400">-</span>
+                      } catch {
+                        return <span className="text-xs text-gray-400">-</span>
+                      }
+                    })()}
+                  </div>
+                  <span className="text-xs text-gray-600">数据源类型:</span>
+                  <span className="col-span-2 text-xs text-gray-900">{meta.sourceType || '-'}</span>
+                </div>
+              )}
+              {!meta.icon && meta.sourceType && (
+                <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                  <span className="text-xs text-gray-600">数据源类型:</span>
+                  <span className="col-span-2 text-xs text-gray-900">{meta.sourceType}</span>
+                </div>
+              )}
+              <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                {meta.createdBy && (
+                  <>
+                    <span className="text-xs text-gray-600">创建人:</span>
+                    <span className="col-span-2 text-xs text-gray-900">{meta.createdBy}</span>
+                  </>
+                )}
+                {meta.createAt && (
+                  <>
+                    <span className="text-xs text-gray-600">创建时间:</span>
+                    <span className="col-span-2 text-xs text-gray-700">{formatDateTime(meta.createAt)}</span>
+                  </>
+                )}
+              </div>
             </div>
           ))}
         </Card>
@@ -911,7 +968,7 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
             <div className="text-gray-500 mb-4">{isMcp ? '暂未配置MCP Server' : '暂未关联任何API'}</div>
             {isMcp ? (
               <div className="max-w-2xl mx-auto">
-                <div className="grid grid-cols-3 gap-4 mt-2">
+                <div className="grid grid-cols-2 gap-4 mt-2">
                   <div
                     onClick={() => setIsModalVisible(true)}
                     className="group cursor-pointer rounded-xl border-2 border-dashed border-gray-200 hover:border-blue-400 p-5 transition-all duration-200 hover:bg-blue-50/50"
@@ -931,16 +988,6 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
                     </div>
                     <div className="font-medium text-sm text-gray-800 mb-1">自定义数据</div>
                     <div className="text-xs text-gray-400 leading-relaxed">手动配置 MCP Server 的连接信息和工具定义</div>
-                  </div>
-                  <div
-                    onClick={() => setIsAgentRuntimeModalVisible(true)}
-                    className="group cursor-pointer rounded-xl border-2 border-dashed border-gray-200 hover:border-green-400 p-5 transition-all duration-200 hover:bg-green-50/50"
-                  >
-                    <div className="w-10 h-10 rounded-lg bg-green-50 group-hover:bg-green-100 flex items-center justify-center mx-auto mb-3 transition-colors">
-                      <RocketOutlined className="text-green-500 text-lg" />
-                    </div>
-                    <div className="font-medium text-sm text-gray-800 mb-1">从AgentRuntime导入</div>
-                    <div className="text-xs text-gray-400 leading-relaxed">从沙箱运行时环境中导入已部署的 MCP Server</div>
                   </div>
                 </div>
               </div>
@@ -1027,7 +1074,7 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
     const isAgent = apiProduct.type === 'AGENT_API'
     const isModel = apiProduct.type === 'MODEL_API'
 
-    // MCP Server类型：无论是否有linkedService都显示tools和连接点配置  
+    // MCP Server类型：展示工具列表和连接点配置
     if (isMcp && apiProduct.mcpConfig) {
       return (
         <Card title="配置详情">
@@ -1102,6 +1149,21 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
                         </div>
                       ),
                     },
+                    ...(() => {
+                      const intro = mcpMetaList.find((m: any) => m.serviceIntro)?.serviceIntro
+                      if (!intro) return []
+                      return [{
+                        key: "intro",
+                        label: "介绍",
+                        children: (
+                          <div className="markdown-body text-sm p-2">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                              {intro}
+                            </ReactMarkdown>
+                          </div>
+                        ),
+                      }]
+                    })(),
                   ]}
                 />
               </Card>
@@ -1220,6 +1282,43 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
                   />
                 </div>
               </Card>
+
+              {/* 额外参数 */}
+              {mcpMetaList.length > 0 && (() => {
+                let allExtraParams: any[] = []
+                mcpMetaList.forEach((meta: any) => {
+                  try {
+                    const params = meta.extraParams ? JSON.parse(meta.extraParams) : []
+                    if (Array.isArray(params)) allExtraParams = allExtraParams.concat(params)
+                  } catch { /* */ }
+                })
+                if (allExtraParams.length === 0) return null
+                return (
+                  <Card className="mt-4">
+                    <h3 className="text-sm font-semibold mb-3">额外参数</h3>
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-gray-200 text-gray-500">
+                          <th className="text-left py-2 pr-3 font-medium">参数名</th>
+                          <th className="text-left py-2 pr-3 font-medium">位置</th>
+                          <th className="text-left py-2 pr-3 font-medium">必填</th>
+                          <th className="text-left py-2 font-medium">说明</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allExtraParams.map((p: any, i: number) => (
+                          <tr key={i} className="border-b border-gray-100 last:border-0">
+                            <td className="py-2 pr-3 font-mono text-gray-800">{p.name || p.key}</td>
+                            <td className="py-2 pr-3 text-gray-500">{p.position || '-'}</td>
+                            <td className="py-2 pr-3">{p.required ? <span className="text-red-500">是</span> : <span className="text-gray-400">否</span>}</td>
+                            <td className="py-2 text-gray-500">{p.description || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </Card>
+                )
+              })()}
             </Col>
           </Row>
         </Card>
@@ -2172,6 +2271,7 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
               serviceIntro: values.serviceIntro,
               visibility: 'PUBLIC',
               publishStatus: 'DRAFT',
+              sandboxRequired: values.sandboxRequired || false,
             })
             message.success('MCP 配置保存成功')
             setIsCustomConfigModalVisible(false)
@@ -2183,19 +2283,6 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
         }}
       />
 
-      {/* 从AgentRuntime导入弹窗 - 占位 */}
-      <Modal
-        title="从AgentRuntime导入"
-        open={isAgentRuntimeModalVisible}
-        onCancel={() => setIsAgentRuntimeModalVisible(false)}
-        footer={null}
-        width={600}
-      >
-        <div className="text-center py-12 text-gray-400">
-          <RocketOutlined className="text-4xl mb-4 block" />
-          <p>从AgentRuntime导入页面（开发中）</p>
-        </div>
-      </Modal>
     </div>
   )
 } 

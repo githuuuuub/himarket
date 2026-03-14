@@ -20,6 +20,7 @@
 package com.alibaba.himarket.entity;
 
 import jakarta.persistence.*;
+import java.time.LocalDateTime;
 import lombok.*;
 
 @Entity
@@ -30,8 +31,8 @@ import lombok.*;
                     columnNames = {"sandbox_id"},
                     name = "uk_sandbox_id"),
             @UniqueConstraint(
-                    columnNames = {"api_server", "namespace"},
-                    name = "uk_api_server_namespace"),
+                    columnNames = {"sandbox_name"},
+                    name = "uk_sandbox_name"),
         })
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -76,4 +77,10 @@ public class SandboxInstance extends BaseEntity {
 
     @Column(name = "status", length = 32, nullable = false)
     private String status;
+
+    @Column(name = "status_message", length = 512)
+    private String statusMessage;
+
+    @Column(name = "last_checked_at")
+    private LocalDateTime lastCheckedAt;
 }

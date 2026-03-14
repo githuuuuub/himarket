@@ -35,5 +35,6 @@ public class McpMetaResult implements OutputConverter<McpMetaResult, McpServerMe
     private String publishStatus;
     private String toolsConfig;
     private String createdBy;
+    private Boolean sandboxRequired;
     private LocalDateTime createAt;
 }

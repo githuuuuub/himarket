@@ -12,6 +12,7 @@ import {
 } from "@ant-design/icons";
 import APIs from "../lib/apis";
 import type { IMcpCold, IMcpHot } from "../lib/apis/mcpMarket";
+import MarkdownRender from "../components/MarkdownRender";
 import dayjs from "dayjs";
 
 function McpMarketDetail() {
@@ -304,8 +305,8 @@ function McpMarketDetail() {
                     label: "介绍",
                     children: (
                       <div className="pb-6 min-h-[300px]">
-                        <div className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">
-                          {cold.description || "暂无详细介绍"}
+                        <div className="markdown-body text-sm" style={{ backgroundColor: 'transparent' }}>
+                          <MarkdownRender content={cold.description || "暂无详细介绍"} />
                         </div>
                       </div>
                     ),

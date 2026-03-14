@@ -308,7 +308,7 @@ export function McpCustomConfigModal({ visible, onCancel, onOk }: McpCustomConfi
               return (
                 <div
                   key={p.key}
-                  onClick={() => { form.setFieldsValue({ protocolType: p.key }); setExtraParams([]) }}
+                  onClick={() => { form.setFieldsValue({ protocolType: p.key, ...(p.key === 'stdio' ? { sandboxRequired: true } : {}) }); setExtraParams([]) }}
                   className={`relative flex items-center gap-2 rounded-lg border px-3 py-2.5 cursor-pointer transition-all duration-150 ${
                     selected
                       ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500/20'
@@ -322,6 +322,11 @@ export function McpCustomConfigModal({ visible, onCancel, onOk }: McpCustomConfi
               )
             })}
           </div>
+        </Form.Item>
+
+        {/* 是否需要沙箱托管：stdio 强制开启 */}
+        <Form.Item name="sandboxRequired" label="沙箱托管" valuePropName="checked" initialValue={true}>
+          <Switch checkedChildren="需要" unCheckedChildren="不需要" disabled={protocolType === 'stdio'} />
         </Form.Item>
 
         {/* MCP 连接配置 JSON */}
@@ -364,7 +369,7 @@ export function McpCustomConfigModal({ visible, onCancel, onOk }: McpCustomConfi
                 const cfg = servers[serverKey]
 
                 if (cfg.command) {
-                  form.setFieldsValue({ protocolType: 'stdio' })
+                  form.setFieldsValue({ protocolType: 'stdio', sandboxRequired: true })
                 } else if (cfg.type === 'sse') {
                   form.setFieldsValue({ protocolType: 'sse' })
                 } else {

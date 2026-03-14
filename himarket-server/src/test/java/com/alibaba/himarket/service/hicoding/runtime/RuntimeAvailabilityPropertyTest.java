@@ -41,7 +41,7 @@ class RuntimeAvailabilityPropertyTest {
             remoteConfig.setHost("");
         }
         props.setRemote(remoteConfig);
-        return new RuntimeSelector(props, null);
+        return new RuntimeSelector(props);
     }
 
     // ===== Property 7b: REMOTE 可用性取决于配置状态 =====

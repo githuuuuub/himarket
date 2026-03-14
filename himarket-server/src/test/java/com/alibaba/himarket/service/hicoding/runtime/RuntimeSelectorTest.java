@@ -37,7 +37,7 @@ class RuntimeSelectorTest {
             remoteConfig.setHost("");
         }
         acpProperties.setRemote(remoteConfig);
-        return new RuntimeSelector(acpProperties, null);
+        return new RuntimeSelector(acpProperties);
     }
 
     private CliProviderConfig createProvider(

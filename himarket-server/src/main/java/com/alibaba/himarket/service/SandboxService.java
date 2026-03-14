@@ -32,7 +32,12 @@ import org.springframework.data.domain.Pageable;
 public interface SandboxService {
 
     /**
-     * 获取所有可用（ACTIVE）沙箱列表（Portal 端使用，只返回 id 和名称）
+     * 获取所有可用（RUNNING）且支持 MCP 托管的沙箱列表（Portal 端使用）
+     */
+    List<SandboxSimpleResult> listMcpCapableSandboxes();
+
+    /**
+     * 获取所有可用（RUNNING）沙箱列表（Portal 端使用，只返回 id 和名称）
      */
     List<SandboxSimpleResult> listActiveSandboxes();
 
@@ -65,4 +70,9 @@ public interface SandboxService {
      * 获取集群信息（解析KubeConfig，返回namespace列表）
      */
     ClusterInfoResult fetchClusterInfo(String kubeConfig);
+
+    /**
+     * 手动触发单个沙箱实例的健康检查，返回更新后的状态
+     */
+    SandboxResult healthCheck(String sandboxId);
 }

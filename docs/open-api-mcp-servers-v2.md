@@ -1,4 +1,4 @@
-# HiMarket MCP Server 开放接口文档
+# HiMarket MCP Server 开放接口文档 v2
 
 ## 概述
 
@@ -129,7 +129,7 @@ POST /open-api/mcp-servers/register
 | `mcpName` | string | ✅ | 最长 63 字符 | MCP 英文标识名，全局唯一 |
 | `displayName` | string | ✅ | 最长 128 字符 | 展示名称 |
 | `protocolType` | string | ✅ | 枚举值，逗号分隔 | 协议类型，支持多值，见下方说明 |
-| `connectionConfig` | string | ✅ | 合法 JSON 字符串 | 连接配置，见下方说明 |
+| `connectionConfig` | string | ✅ | 合法 JSON 字符串 | 连接配置，见下方说明。非 stdio 协议时必须包含有效的连接地址（url） |
 | `origin` | string | | 枚举值 | 来源标识，默认 `OPEN_API`，见下方说明 |
 | `createdBy` | string | | | 外部系统的用户ID，用于标识注册者 |
 | `description` | string | | | 简短描述 |
@@ -140,6 +140,7 @@ POST /open-api/mcp-servers/register
 | `serviceIntro` | string | | Markdown | 服务详细介绍，支持 Markdown 格式 |
 | `visibility` | string | | 枚举值 | `PUBLIC`（默认）或 `PRIVATE` |
 | `toolsConfig` | string | | JSON 字符串 | 工具列表定义 |
+| `sandboxRequired` | boolean | | | 是否需要沙箱托管，默认 `true`。stdio 协议强制 `true`，网关导入默认 `false` |
 
 #### protocolType 取值
 
@@ -233,6 +234,8 @@ connectionConfig 是一个 JSON 字符串，格式取决于 protocolType。`mcpS
 ```
 
 > 注意：connectionConfig 作为字符串传入时需要转义双引号。
+
+> 校验规则：当 protocolType 不包含 `stdio`（即纯 `sse` 或 `http`）时，系统会校验 connectionConfig 中是否包含有效的连接地址（url）。如果缺少连接地址或格式无法解析，注册会返回 `INVALID_REQUEST` 错误。stdio 协议不做此校验，因为 stdio 类型通过沙箱部署运行，不需要预设连接地址。
 
 #### toolsConfig 格式
 
@@ -328,6 +331,7 @@ curl -X POST 'https://himarket.example.com/open-api/mcp-servers/register' \
     "repoUrl": null,
     "icon": null,
     "protocolType": "sse",
+    "connectionConfig": "{\"mcpServers\":{\"weather-mcp\":{\"type\":\"sse\",\"url\":\"https://weather.example.com/sse\"}}}",
     "origin": "OPEN_API",
     "tags": "天气,查询,工具",
     "extraParams": null,
@@ -348,6 +352,16 @@ curl -X POST 'https://himarket.example.com/open-api/mcp-servers/register' \
 mcpName 为空：
 ```json
 { "code": "INVALID_REQUEST", "message": "MCP 英文名称不能为空" }
+```
+
+非 stdio 协议缺少连接地址：
+```json
+{ "code": "INVALID_REQUEST", "message": "非 stdio 协议必须提供 connectionConfig（包含连接地址）" }
+```
+
+connectionConfig 格式错误：
+```json
+{ "code": "INVALID_REQUEST", "message": "connectionConfig 格式错误或缺少连接地址: ..." }
 ```
 
 ---
@@ -384,6 +398,7 @@ curl -X GET 'https://himarket.example.com/open-api/mcp-servers/meta/mcp-a1b2c3d4
     "repoUrl": null,
     "icon": null,
     "protocolType": "sse",
+    "connectionConfig": "{\"mcpServers\":{\"weather-mcp\":{\"type\":\"sse\",\"url\":\"https://weather.example.com/sse\"}}}",
     "origin": "OPEN_API",
     "tags": "天气,查询,工具",
     "extraParams": null,
@@ -540,6 +555,7 @@ curl -X GET 'https://himarket.example.com/open-api/mcp-servers/meta/list-all?pag
 | `repoUrl` | string | 仓库/主页地址 |
 | `icon` | string | 图标配置 JSON |
 | `protocolType` | string | 协议类型：`stdio` / `sse` / `http` |
+| `connectionConfig` | string | 连接配置 JSON 字符串 |
 | `origin` | string | 来源：`OPEN_API` / `GATEWAY` / `NACOS` / `ADMIN` |
 | `tags` | string | 标签（逗号分隔） |
 | `extraParams` | string | 额外参数定义 JSON |
@@ -547,6 +563,7 @@ curl -X GET 'https://himarket.example.com/open-api/mcp-servers/meta/list-all?pag
 | `visibility` | string | 可见性：`PUBLIC` / `PRIVATE` |
 | `publishStatus` | string | 发布状态（见下方说明） |
 | `toolsConfig` | string | 工具列表配置 JSON |
+| `sandboxRequired` | boolean | 是否需要沙箱托管 |
 | `createdBy` | string | 创建者 |
 | `createAt` | string | 创建时间，格式 `yyyy-MM-ddTHH:mm:ss` |
 
@@ -564,6 +581,7 @@ curl -X GET 'https://himarket.example.com/open-api/mcp-servers/meta/list-all?pag
 | `origin` | string | 来源 |
 | `tags` | string | 标签 |
 | `publishStatus` | string | 发布状态 |
+| `sandboxRequired` | boolean | 是否需要沙箱托管 |
 | `createAt` | string | 创建时间 |
 
 ### publishStatus 状态说明
@@ -596,7 +614,7 @@ curl -X GET 'https://himarket.example.com/open-api/mcp-servers/meta/list-all?pag
 
 ## 注意事项
 
-1. 所有查询接口不返回 `productId` 和 `connectionConfig`，这些是系统内部字段
+1. 所有查询接口不返回 `productId`，这是系统内部字段
 2. 注册后的 MCP 状态为 `PENDING`，需管理员审核发布后才会在市场中展示
 3. `mcpName` 全局唯一，重复注册会更新已有记录（按 mcpName 匹配）
 4. `connectionConfig` 和 `toolsConfig` 等 JSON 字段，作为请求参数时需要以字符串形式传入（注意转义双引号）

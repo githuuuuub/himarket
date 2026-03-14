@@ -73,7 +73,8 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
             String connectionConfig,
             String apiKey,
             String authType,
-            String userParams) {
+            String userParams,
+            String extraParamsDef) {
         if (StrUtil.isBlank(sandbox.getKubeConfig())) {
             throw new BusinessException(
                     ErrorCode.INVALID_REQUEST, "沙箱实例未配置 KubeConfig: " + sandbox.getSandboxId());
@@ -90,8 +91,60 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
         String mcpServersJson = mcpResult[0];
         String configEnvJson = mcpResult[1];
 
-        // 合并 env：connectionConfig 中的 env + 用户提交的 params
-        String mergedEnvJson = mergeEnvJson(configEnvJson, userParams);
+        // 非 stdio：根据 extraParams 定义的 position 将用户参数分流到 headers/query/env
+        // stdio：所有用户参数都作为 env 处理
+        String envParamsJson = userParams; // 默认全部当 env
+        if (!isStdio && StrUtil.isNotBlank(extraParamsDef) && StrUtil.isNotBlank(userParams)) {
+            try {
+                Map<String, String> headerParams = new LinkedHashMap<>();
+                Map<String, String> queryParams = new LinkedHashMap<>();
+                Map<String, String> envParams = new LinkedHashMap<>();
+
+                // 解析参数定义（含 position）
+                List<?> defs = OBJECT_MAPPER.readValue(extraParamsDef, List.class);
+                // 解析用户提交的参数值
+                @SuppressWarnings("unchecked")
+                Map<String, String> userValues = OBJECT_MAPPER.readValue(userParams, Map.class);
+
+                for (Object defObj : defs) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> def = (Map<String, Object>) defObj;
+                    String paramName = (String) def.get("name");
+                    String position = (String) def.getOrDefault("position", "env");
+                    String value = userValues.get(paramName);
+                    if (StrUtil.isBlank(value)) continue;
+
+                    switch (position.toLowerCase()) {
+                        case "header":
+                            headerParams.put(paramName, value);
+                            break;
+                        case "query":
+                            queryParams.put(paramName, value);
+                            break;
+                        default:
+                            envParams.put(paramName, value);
+                            break;
+                    }
+                }
+
+                // 将 header 和 query 参数注入到 mcpServers JSON
+                if (!headerParams.isEmpty() || !queryParams.isEmpty()) {
+                    mcpServersJson =
+                            injectParamsIntoMcpServersJson(
+                                    mcpServersJson, headerParams, queryParams);
+                }
+
+                // env 参数继续走原来的逻辑
+                envParamsJson =
+                        envParams.isEmpty() ? null : OBJECT_MAPPER.writeValueAsString(envParams);
+            } catch (Exception e) {
+                log.warn("按 position 分流参数失败，回退为全部当 env: {}", e.getMessage());
+                envParamsJson = userParams;
+            }
+        }
+
+        // 合并 env：connectionConfig 中的 env + env 类型的用户参数
+        String mergedEnvJson = mergeEnvJson(configEnvJson, envParamsJson);
         String envYaml = "";
         if (StrUtil.isNotBlank(mergedEnvJson)) {
             envYaml = buildEnvYaml(mergedEnvJson);
@@ -107,6 +160,10 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
         vars.put("MCP_SERVERS_JSON", mcpServersJson);
         vars.put("ACCESSES_YAML", buildAccessesYaml(isBearer, accessName));
         vars.put("ENV_YAML", envYaml);
+
+        // 从沙箱 extraConfig 读取资源规格和镜像
+        Map<String, String> resourceVars = extractResourceVars(sandbox.getExtraConfig());
+        vars.putAll(resourceVars);
 
         // 选择模板
         String templateFile =
@@ -308,6 +365,59 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
     }
 
     /**
+     * 将 header 和 query 参数注入到 mcpServers JSON 中。
+     * header 参数 → 每个 server 的 "headers" 字段
+     * query 参数 → 追加到每个 server 的 "url" 的 query string
+     */
+    @SuppressWarnings("unchecked")
+    private String injectParamsIntoMcpServersJson(
+            String mcpServersJson,
+            Map<String, String> headerParams,
+            Map<String, String> queryParams) {
+        try {
+            Map<String, Object> root = OBJECT_MAPPER.readValue(mcpServersJson, Map.class);
+            Map<String, Object> servers = (Map<String, Object>) root.get("mcpServers");
+            if (servers == null) return mcpServersJson;
+
+            for (Map.Entry<String, Object> entry : servers.entrySet()) {
+                Map<String, Object> server = (Map<String, Object>) entry.getValue();
+
+                // 注入 headers
+                if (!headerParams.isEmpty()) {
+                    Map<String, String> headers =
+                            server.containsKey("headers")
+                                    ? new LinkedHashMap<>(
+                                            (Map<String, String>) server.get("headers"))
+                                    : new LinkedHashMap<>();
+                    headers.putAll(headerParams);
+                    server.put("headers", headers);
+                }
+
+                // 注入 query 参数到 url
+                if (!queryParams.isEmpty() && server.containsKey("url")) {
+                    String url = server.get("url").toString();
+                    StringBuilder sb = new StringBuilder(url);
+                    sb.append(url.contains("?") ? "&" : "?");
+                    boolean first = true;
+                    for (Map.Entry<String, String> qp : queryParams.entrySet()) {
+                        if (!first) sb.append("&");
+                        sb.append(java.net.URLEncoder.encode(qp.getKey(), "UTF-8"))
+                                .append("=")
+                                .append(java.net.URLEncoder.encode(qp.getValue(), "UTF-8"));
+                        first = false;
+                    }
+                    server.put("url", sb.toString());
+                }
+            }
+
+            return OBJECT_MAPPER.writeValueAsString(root);
+        } catch (Exception e) {
+            log.warn("注入 header/query 参数到 mcpServersJson 失败: {}", e.getMessage());
+            return mcpServersJson;
+        }
+    }
+
+    /**
      * 根据鉴权方式生成 CRD accesses YAML 片段。
      * bearer：包含 authentication + name + port + type。
      * none：只有 port + type，不含 authentication 和 name。
@@ -419,6 +529,66 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
             log.warn("解析 envJson 构建 env 失败: {}", e.getMessage());
             return "";
         }
+    }
+
+    /**
+     * 从沙箱 extraConfig 中提取资源规格和镜像，用于 CRD 模板占位符替换。
+     * 如果缺少必要配置则抛出异常。
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, String> extractResourceVars(String extraConfig) {
+        if (StrUtil.isBlank(extraConfig)) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "沙箱未配置资源规格和镜像，请先在沙箱管理中完善配置");
+        }
+
+        Map<String, Object> config;
+        try {
+            config = OBJECT_MAPPER.readValue(extraConfig, Map.class);
+        } catch (Exception e) {
+            throw new BusinessException(
+                    ErrorCode.INVALID_REQUEST, "沙箱 extraConfig 格式异常: " + e.getMessage());
+        }
+
+        String image = config.get("image") != null ? config.get("image").toString().trim() : "";
+        if (StrUtil.isBlank(image)) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "沙箱未配置容器镜像，请先在沙箱管理中设置镜像");
+        }
+
+        Object specObj = config.get("resourceSpec");
+        if (!(specObj instanceof Map)) {
+            throw new BusinessException(
+                    ErrorCode.INVALID_REQUEST, "沙箱未配置资源规格，请先在沙箱管理中设置 CPU/内存等资源");
+        }
+
+        Map<String, Object> spec = (Map<String, Object>) specObj;
+        String cpuRequest = requireField(spec, "cpuRequest", "CPU Request");
+        String cpuLimit = requireField(spec, "cpuLimit", "CPU Limit");
+        String memoryRequest = requireField(spec, "memoryRequest", "Memory Request");
+        String memoryLimit = requireField(spec, "memoryLimit", "Memory Limit");
+        String ephemeralStorage = requireField(spec, "ephemeralStorage", "临时存储空间");
+
+        Map<String, String> vars = new LinkedHashMap<>();
+        vars.put("CPU_REQUEST", cpuRequest);
+        vars.put("CPU_LIMIT", cpuLimit);
+        vars.put("MEMORY_REQUEST", memoryRequest);
+        vars.put("MEMORY_LIMIT", memoryLimit);
+        vars.put("EPHEMERAL_STORAGE", ephemeralStorage);
+        vars.put("IMAGE", image);
+        return vars;
+    }
+
+    private String requireField(Map<String, Object> spec, String key, String label) {
+        Object val = spec.get(key);
+        if (val == null || StrUtil.isBlank(val.toString())) {
+            throw new BusinessException(
+                    ErrorCode.INVALID_REQUEST, "沙箱资源规格缺少 " + label + "，请先在沙箱管理中完善配置");
+        }
+        return val.toString();
+    }
+
+    private String getOrDefault(Map<String, Object> map, String key, String defaultValue) {
+        Object val = map.get(key);
+        return (val != null && StrUtil.isNotBlank(val.toString())) ? val.toString() : defaultValue;
     }
 
     /**

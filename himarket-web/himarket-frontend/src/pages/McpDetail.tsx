@@ -14,6 +14,7 @@ import APIs from "../lib/apis";
 import type { IProductDetail, IMcpMeta, ISandboxSimple } from "../lib/apis/product";
 import { ProductIconRenderer } from "../components/icon/ProductIconRenderer";
 import { getIconString } from "../lib/iconUtils";
+import MarkdownRender from "../components/MarkdownRender";
 import dayjs from "dayjs";
 
 function McpDetail() {
@@ -423,6 +424,9 @@ function McpDetail() {
                     <Tag key={p} color="blue" className="border-0 m-0 bg-blue-50">{p.toUpperCase()}</Tag>
                   ))}
                 </div>
+                {meta?.mcpName && (
+                  <div className="text-xs text-gray-400 font-mono mb-1.5">{meta.mcpName}</div>
+                )}
                 <p className="text-sm text-gray-500 leading-relaxed mb-3 max-w-2xl">
                   {description || "暂无描述"}
                 </p>
@@ -464,8 +468,8 @@ function McpDetail() {
                     label: "介绍",
                     children: (
                       <div className="pb-6 min-h-[300px]">
-                        <div className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">
-                          {serviceIntro || description || "暂无详细介绍"}
+                        <div className="markdown-body text-sm" style={{ backgroundColor: 'transparent' }}>
+                          <MarkdownRender content={serviceIntro || description || "暂无详细介绍"} />
                         </div>
                       </div>
                     ),
@@ -548,8 +552,8 @@ function McpDetail() {
                   // 构建 tab 列表
                   const tabItems: { key: string; label: string; children: React.ReactNode }[] = [];
 
-                  // Remote tab（stdio 或有沙箱部署需求时展示）
-                  if (hasStdio) {
+                  // Remote tab（stdio 或标记需要沙箱托管时展示）
+                  if (hasStdio || meta?.sandboxRequired) {
                     tabItems.push({
                       key: "remote",
                       label: "Remote",
@@ -601,8 +605,8 @@ function McpDetail() {
                         )}
                       </div>
                       <Tabs size="small" defaultActiveKey={tabItems[0]?.key} items={tabItems} />
-                      {/* 订阅/取消订阅按钮（仅网络协议类型需要，stdio 在 Remote tab 内处理） */}
-                      {hasNetworkProtocol && (
+                      {/* 订阅/取消订阅按钮（仅网络协议类型且不需要沙箱托管时展示，沙箱托管在 Remote tab 内处理） */}
+                      {hasNetworkProtocol && !meta?.sandboxRequired && (
                         <div className="mt-3">
                           {!subscribed ? (
                             <div className="space-y-2">
@@ -702,9 +706,6 @@ function McpDetail() {
     if (subscribed && !remoteEditing) {
       return (
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Tag color="green" className="m-0 border-0">已订阅</Tag>
-          </div>
           {renderConfigJsonBlock(remoteConfigJson)}
           <div className="flex gap-2">
             <Button
@@ -856,24 +857,42 @@ function McpDetail() {
     );
   }
 
+  // JSON 语法高亮（浅色主题）
+  function highlightJson(json: string) {
+    return json.replace(
+      /("(?:\\.|[^"\\])*")\s*:/g,
+      '<span style="color:#6366f1">$1</span>:'
+    ).replace(
+      /:\s*("(?:\\.|[^"\\])*")/g,
+      ': <span style="color:#059669">$1</span>'
+    ).replace(
+      /:\s*(\d+)/g,
+      ': <span style="color:#d97706">$1</span>'
+    ).replace(
+      /:\s*(true|false|null)/g,
+      ': <span style="color:#dc2626">$1</span>'
+    );
+  }
+
   // 统一的配置 JSON 展示块
   function renderConfigJsonBlock(json: string) {
     if (!json) {
       return <div className="text-xs text-gray-400 text-center py-4">已订阅，但暂无可用链接</div>;
     }
     return (
-      <div className="relative">
-        <div className="bg-gray-900 rounded-lg p-4 overflow-x-auto">
+      <div className="relative group/json">
+        <div className="rounded-lg p-3 overflow-x-auto border border-purple-100 bg-purple-50/30">
           <Button
             type="text"
             size="small"
             icon={<CopyOutlined />}
-            className="absolute top-2 right-2 text-gray-400 hover:text-white z-10"
+            className="absolute top-1.5 right-1.5 text-gray-300 hover:text-gray-500 opacity-0 group-hover/json:opacity-100 transition-opacity z-10"
             onClick={() => handleCopy(json)}
           />
-          <pre className="text-xs text-gray-100 font-mono whitespace-pre leading-relaxed">
-            {json}
-          </pre>
+          <pre
+            className="text-xs font-mono whitespace-pre leading-relaxed text-gray-500"
+            dangerouslySetInnerHTML={{ __html: highlightJson(json) }}
+          />
         </div>
       </div>
     );
