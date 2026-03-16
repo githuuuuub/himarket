@@ -36,26 +36,5 @@ public class ImportSandboxParam implements InputConverter<SandboxInstance> {
     @NotBlank(message = "KubeConfig不能为空")
     private String kubeConfig;
 
-    @NotBlank(message = "Namespace不能为空")
-    private String namespace;
-
     private String description;
-
-    /** 资源规格配置（JSON），包含 requests/limits/ephemeralStorage */
-    private ResourceSpec resourceSpec;
-
-    /** 沙箱容器镜像 */
-    private String image;
-
-    /** 沙箱提供的功能列表，如 MCP_HOSTING, AGENT_HOSTING, CODING */
-    private java.util.List<String> capabilities;
-
-    @Data
-    public static class ResourceSpec {
-        private String cpuRequest;
-        private String cpuLimit;
-        private String memoryRequest;
-        private String memoryLimit;
-        private String ephemeralStorage;
-    }
 }

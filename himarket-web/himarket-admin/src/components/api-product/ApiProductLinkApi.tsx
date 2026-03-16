@@ -1,14 +1,14 @@
-import { Card, Button, Modal, Form, Select, message, Collapse, Tabs, Row, Col, Tag } from 'antd'
+import { Card, Button, Modal, Form, Select, message, Collapse, Tabs, Row, Col, Tag, Input, Spin, Space, Radio } from 'antd'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github.css'
 import 'github-markdown-css/github-markdown-light.css'
-import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined, CopyOutlined, CloudUploadOutlined, SettingOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined, CopyOutlined, CloudUploadOutlined, SettingOutlined, SyncOutlined, EditOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons'
 import { useState, useEffect } from 'react'
 import type { ApiProduct, LinkedService, RestAPIItem, NacosMCPItem, APIGAIMCPItem, AIGatewayAgentItem, AIGatewayModelItem, ApiItem, AdpAIGatewayModelItem, ApsaraGatewayModelItem } from '@/types/api-product'
 import type { Gateway, NacosInstance } from '@/types/gateway'
-import { apiProductApi, gatewayApi, nacosApi, mcpServerApi } from '@/lib/api'
+import { apiProductApi, gatewayApi, nacosApi, mcpServerApi, sandboxApi } from '@/lib/api'
 import { getGatewayTypeLabel } from '@/lib/constant'
 import { copyToClipboard, formatDomainWithPort, formatDateTime } from '@/lib/utils'
 import * as yaml from 'js-yaml'
@@ -54,10 +54,21 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
   const [httpJson, setHttpJson] = useState('')
   const [sseJson, setSseJson] = useState('')
   const [localJson, setLocalJson] = useState('')
+  const [hotSseJson, setHotSseJson] = useState('')
+  const [hotHttpJson, setHotHttpJson] = useState('')
   const [selectedDomainIndex, setSelectedDomainIndex] = useState<number>(0)
   const [selectedAgentDomainIndex, setSelectedAgentDomainIndex] = useState<number>(0)
   const [selectedModelDomainIndex, setSelectedModelDomainIndex] = useState<number>(0)
   const [mcpMetaList, setMcpMetaList] = useState<any[]>([])
+  const [fetchingTools, setFetchingTools] = useState(false)
+  const [editingIntro, setEditingIntro] = useState(false)
+  const [introText, setIntroText] = useState('')
+  const [savingIntro, setSavingIntro] = useState(false)
+  const [activeToolsTab, setActiveToolsTab] = useState('tools')
+  const [deployModalMcpServerId, setDeployModalMcpServerId] = useState<string | null>(null)
+  const [deploying, setDeploying] = useState(false)
+  const [deploySandboxList, setDeploySandboxList] = useState<any[]>([])
+  const [deploySandboxLoading, setDeploySandboxLoading] = useState(false)
 
   useEffect(() => {
     fetchGateways()
@@ -67,20 +78,66 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
     }
   }, [])
 
-  // 解析MCP tools配置
+  // 解析MCP tools配置：优先从冷数据 mcpMetaList[0].toolsConfig 读取，fallback 到 apiProduct.mcpConfig.tools
   useEffect(() => {
-    if (apiProduct.type === 'MCP_SERVER' && apiProduct.mcpConfig?.tools) {
+    if (apiProduct.type !== 'MCP_SERVER') {
+      setParsedTools([])
+      return
+    }
+
+    // 优先使用冷数据 meta.toolsConfig（JSON 格式，refreshTools 直接更新这里）
+    const metaToolsConfig = mcpMetaList[0]?.toolsConfig
+    if (metaToolsConfig) {
+      try {
+        // toolsConfig 可能是 JSON 字符串，也可能已经被反序列化为对象/数组
+        let toolsArr = metaToolsConfig
+        if (typeof toolsArr === 'string') {
+          toolsArr = JSON.parse(toolsArr)
+        }
+        if (Array.isArray(toolsArr) && toolsArr.length > 0) {
+          // toolsConfig 存的是 McpSchema.Tool[]，字段为 name/description/inputSchema
+          const mapped = toolsArr.map((t: any) => ({
+            name: t.name || '',
+            description: t.description || '',
+            args: t.inputSchema?.properties
+              ? Object.entries(t.inputSchema.properties).map(([key, val]: [string, any]) => ({
+                  name: key,
+                  description: val.description || '',
+                  type: val.type || 'string',
+                  required: Array.isArray(t.inputSchema.required) && t.inputSchema.required.includes(key),
+                  position: 'query',
+                }))
+              : undefined,
+          }))
+          setParsedTools(mapped)
+          return
+        }
+      } catch {
+        // JSON 解析失败，尝试 YAML 解析（网关导入的 tools 可能是 YAML 格式）
+        try {
+          const parsedConfig = parseYamlConfig(typeof metaToolsConfig === 'string' ? metaToolsConfig : '')
+          if (parsedConfig && parsedConfig.tools && Array.isArray(parsedConfig.tools)) {
+            setParsedTools(parsedConfig.tools)
+            return
+          }
+        } catch {
+          // YAML 也解析失败，fallback
+        }
+      }
+    }
+
+    // fallback: 从 apiProduct.mcpConfig.tools（YAML 格式，网关/Nacos 导入时写入）
+    if (apiProduct.mcpConfig?.tools) {
       const parsedConfig = parseYamlConfig(apiProduct.mcpConfig.tools)
       if (parsedConfig && parsedConfig.tools && Array.isArray(parsedConfig.tools)) {
         setParsedTools(parsedConfig.tools)
       } else {
-        // 如果tools字段存在但是空数组，也设置为空数组
         setParsedTools([])
       }
     } else {
       setParsedTools([])
     }
-  }, [apiProduct])
+  }, [apiProduct, mcpMetaList])
 
   // 生成连接配置
   // 当产品切换时重置域名选择索引
@@ -130,6 +187,35 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
       )
     }
   }, [apiProduct, linkedService, selectedDomainIndex])
+
+  // 根据热数据（endpoint）生成连接配置
+  useEffect(() => {
+    if (apiProduct.type !== 'MCP_SERVER' || mcpMetaList.length === 0) {
+      setHotSseJson('')
+      setHotHttpJson('')
+      return
+    }
+    const meta = mcpMetaList[0]
+    if (!meta.endpointUrl || meta.endpointStatus !== 'ACTIVE') {
+      setHotSseJson('')
+      setHotHttpJson('')
+      return
+    }
+    const serverName = meta.mcpName || apiProduct.name
+    const protocol = (meta.endpointProtocol || '').toLowerCase()
+    const endpointUrl = meta.endpointUrl
+    if (protocol === 'sse') {
+      setHotSseJson(JSON.stringify({ mcpServers: { [serverName]: { type: 'sse', url: endpointUrl } } }, null, 2))
+      setHotHttpJson('')
+    } else if (protocol === 'streamablehttp' || protocol === 'http') {
+      setHotHttpJson(JSON.stringify({ mcpServers: { [serverName]: { url: endpointUrl } } }, null, 2))
+      setHotSseJson('')
+    } else {
+      // 默认当 SSE 处理
+      setHotSseJson(JSON.stringify({ mcpServers: { [serverName]: { type: 'sse', url: endpointUrl } } }, null, 2))
+      setHotHttpJson('')
+    }
+  }, [mcpMetaList, apiProduct])
 
   // 生成域名选项的函数
   const getDomainOptions = (domains: Array<{ domain: string; port?: number; protocol: string; networkType?: string }>) => {
@@ -328,6 +414,127 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
       setMcpMetaList(res.data || [])
     } catch {
       setMcpMetaList([])
+    }
+  }
+
+  const handleRefreshTools = async () => {
+    const meta = mcpMetaList[0]
+    if (!meta?.mcpServerId) return
+    setFetchingTools(true)
+    try {
+      await mcpServerApi.refreshTools(meta.mcpServerId)
+      message.success('工具列表获取成功')
+      await fetchMcpMeta()
+      await handleRefresh()
+    } catch (e: any) {
+      message.error(e?.response?.data?.message || '获取工具列表失败')
+    } finally {
+      setFetchingTools(false)
+    }
+  }
+
+  const handleSaveIntro = async () => {
+    const meta = mcpMetaList[0]
+    if (!meta?.mcpServerId) return
+    setSavingIntro(true)
+    try {
+      await mcpServerApi.updateServiceIntro(meta.mcpServerId, introText)
+      message.success('介绍已保存')
+      setEditingIntro(false)
+      await fetchMcpMeta()
+      await handleRefresh()
+    } catch {
+      message.error('保存失败')
+    } finally {
+      setSavingIntro(false)
+    }
+  }
+
+  // 打开部署沙箱弹窗时加载沙箱列表
+  useEffect(() => {
+    if (!deployModalMcpServerId) return
+    setDeploySandboxLoading(true)
+    sandboxApi.getSandboxes({ page: 0, size: 100 }).then((res: any) => {
+      const list = res?.data?.content || res?.data?.records || res?.data || []
+      setDeploySandboxList(Array.isArray(list) ? list : [])
+    }).catch(() => setDeploySandboxList([])).finally(() => setDeploySandboxLoading(false))
+    // 重置 namespace 和参数值
+    setDeployNamespaceList([])
+    setDeployNamespaceLoading(false)
+    setDeployParamValues({})
+  }, [deployModalMcpServerId])
+
+  const [deployForm] = Form.useForm()
+  const deploySandboxIdValue = Form.useWatch('sandboxId', deployForm)
+  const [deployNamespaceList, setDeployNamespaceList] = useState<string[]>([])
+  const [deployNamespaceLoading, setDeployNamespaceLoading] = useState(false)
+  const [deployParamValues, setDeployParamValues] = useState<Record<string, string>>({})
+  const [deployResourcePreset, setDeployResourcePreset] = useState('small')
+
+  const handleDeploySandboxChange = async (sandboxId: string) => {
+    setDeployNamespaceList([])
+    deployForm.setFieldsValue({ namespace: undefined })
+    setDeployNamespaceLoading(true)
+    try {
+      const res: any = await sandboxApi.listNamespaces(sandboxId)
+      const list = res?.data || res || []
+      setDeployNamespaceList(Array.isArray(list) ? list : [])
+    } catch {
+      message.error('获取 Namespace 列表失败')
+      setDeployNamespaceList([])
+    } finally {
+      setDeployNamespaceLoading(false)
+    }
+  }
+
+  // 获取当前部署弹窗对应 meta 的额外参数定义
+  const getDeployExtraParamDefs = (): any[] => {
+    const meta = mcpMetaList.find((m: any) => m.mcpServerId === deployModalMcpServerId)
+    if (!meta?.extraParams) return []
+    try {
+      const parsed = typeof meta.extraParams === 'string' ? JSON.parse(meta.extraParams) : meta.extraParams
+      return Array.isArray(parsed) ? parsed : []
+    } catch { return [] }
+  }
+
+  const handleDeploySandbox = async () => {
+    if (!deployModalMcpServerId) return
+    try {
+      const values = await deployForm.validateFields()
+      setDeploying(true)
+      const paramDefs = getDeployExtraParamDefs()
+      const paramValuesJson = paramDefs.length > 0 && Object.keys(deployParamValues).length > 0
+        ? JSON.stringify(deployParamValues)
+        : undefined
+      const resourceSpec = (values.cpuRequest || values.cpuLimit || values.memoryRequest || values.memoryLimit || values.ephemeralStorage)
+        ? JSON.stringify({
+            cpuRequest: values.cpuRequest || undefined,
+            cpuLimit: values.cpuLimit || undefined,
+            memoryRequest: values.memoryRequest || undefined,
+            memoryLimit: values.memoryLimit || undefined,
+            ephemeralStorage: values.ephemeralStorage || undefined,
+          })
+        : undefined
+      await mcpServerApi.deploySandbox(deployModalMcpServerId, {
+        sandboxId: values.sandboxId,
+        transportType: values.transportType || 'sse',
+        authType: values.authType || 'none',
+        namespace: values.namespace,
+        paramValues: paramValuesJson,
+        resourceSpec,
+      })
+      message.success('沙箱部署成功')
+      setDeployModalMcpServerId(null)
+      deployForm.resetFields()
+      setDeployParamValues({})
+      setDeployResourcePreset('small')
+      await fetchMcpMeta()
+      await handleRefresh()
+    } catch (e: any) {
+      if (e?.errorFields) return // form validation error
+      message.error(e?.response?.data?.message || '沙箱部署失败')
+    } finally {
+      setDeploying(false)
     }
   }
 
@@ -862,9 +1069,16 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
           className="mb-6"
           title="MCP 配置信息"
           extra={
-            <Button type="primary" danger icon={<DeleteOutlined />} onClick={handleDelete}>
-              解除配置
-            </Button>
+            <Space>
+              {mcpMetaList[0]?.sandboxRequired && !mcpMetaList[0]?.endpointUrl && (
+                <Button type="primary" icon={<CloudUploadOutlined />} onClick={() => setDeployModalMcpServerId(mcpMetaList[0].mcpServerId)}>
+                  部署到沙箱
+                </Button>
+              )}
+              <Button type="primary" danger icon={<DeleteOutlined />} onClick={handleDelete}>
+                解除配置
+              </Button>
+            </Space>
           }
         >
           {mcpMetaList.map((meta: any) => (
@@ -899,6 +1113,35 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
                 <div className="grid grid-cols-6 gap-8 pt-2 pb-2">
                   <span className="text-xs text-gray-600">描述:</span>
                   <span className="col-span-5 text-xs text-gray-700 leading-relaxed">{meta.description}</span>
+                </div>
+              )}
+              {meta.sandboxRequired && (
+                <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                  <span className="text-xs text-gray-600">沙箱托管:</span>
+                  <div className="col-span-5 flex items-center gap-2">
+                    {meta.endpointUrl ? (
+                      <>
+                        <Tag color={meta.endpointStatus === 'ACTIVE' ? 'green' : 'default'} className="m-0">
+                          {meta.endpointStatus === 'ACTIVE' ? '运行中' : meta.endpointStatus || '未知'}
+                        </Tag>
+                        <span className="text-xs text-gray-700 font-mono break-all">{meta.endpointUrl}</span>
+                        <CopyOutlined
+                          className="text-gray-400 hover:text-blue-600 cursor-pointer transition-colors flex-shrink-0"
+                          style={{ fontSize: '12px' }}
+                          onClick={async () => {
+                            try {
+                              await copyToClipboard(meta.endpointUrl);
+                              message.success('连接地址已复制');
+                            } catch {
+                              message.error('复制失败');
+                            }
+                          }}
+                        />
+                      </>
+                    ) : (
+                      <Tag color="default" className="m-0">未部署</Tag>
+                    )}
+                  </div>
                 </div>
               )}
               {meta.tags && (() => {
@@ -1083,12 +1326,45 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
             <Col span={15}>
               <Card>
                 <Tabs
-                  defaultActiveKey="tools"
+                  activeKey={activeToolsTab}
+                  onChange={setActiveToolsTab}
+                  tabBarExtraContent={
+                    activeToolsTab === 'tools' ? (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<SyncOutlined spin={fetchingTools} />}
+                        loading={fetchingTools}
+                        onClick={handleRefreshTools}
+                        style={{ fontSize: 12, color: '#1677ff' }}
+                      >
+                        {parsedTools.length === 0 ? '获取工具列表' : '刷新工具'}
+                      </Button>
+                    ) : activeToolsTab === 'intro' && !editingIntro ? (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={() => {
+                          const intro = mcpMetaList.find((m: any) => m.serviceIntro)?.serviceIntro
+                          setIntroText(intro || '')
+                          setEditingIntro(true)
+                        }}
+                        style={{ fontSize: 12, color: '#1677ff' }}
+                      >
+                        编辑
+                      </Button>
+                    ) : null
+                  }
                   items={[
                     {
                       key: "tools",
                       label: `Tools (${parsedTools.length})`,
-                      children: parsedTools.length > 0 ? (
+                      children: fetchingTools ? (
+                        <div className="text-center py-12">
+                          <Spin tip="正在获取工具列表，请稍候..." />
+                        </div>
+                      ) : parsedTools.length > 0 ? (
                         <div className="border border-gray-200 rounded-lg bg-gray-50">
                           {parsedTools.map((tool, idx) => (
                             <div key={idx} className={idx < parsedTools.length - 1 ? "border-b border-gray-200" : ""}>
@@ -1144,26 +1420,51 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
                           ))}
                         </div>
                       ) : (
-                        <div className="text-gray-500 text-center py-8">
-                          No tools available
+                        <div className="text-center py-12">
+                          <div className="text-gray-400 mb-3">暂无工具信息，请先获取工具列表</div>
+                          <div className="text-xs text-gray-400">点击右上角「获取工具列表」按钮</div>
                         </div>
                       ),
                     },
-                    ...(() => {
-                      const intro = mcpMetaList.find((m: any) => m.serviceIntro)?.serviceIntro
-                      if (!intro) return []
-                      return [{
-                        key: "intro",
-                        label: "介绍",
-                        children: (
-                          <div className="markdown-body text-sm p-2">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                              {intro}
-                            </ReactMarkdown>
+                    {
+                      key: "intro",
+                      label: "介绍",
+                      children: (() => {
+                        const intro = mcpMetaList.find((m: any) => m.serviceIntro)?.serviceIntro
+                        if (editingIntro) {
+                          return (
+                            <div>
+                              <Input.TextArea
+                                value={introText}
+                                onChange={(e) => setIntroText(e.target.value)}
+                                rows={12}
+                                placeholder="请输入 MCP 服务介绍（支持 Markdown 格式）"
+                                style={{ fontFamily: 'monospace', fontSize: 13 }}
+                              />
+                              <div className="flex justify-end gap-2 mt-3">
+                                <Button size="small" icon={<CloseOutlined />} onClick={() => setEditingIntro(false)}>取消</Button>
+                                <Button size="small" type="primary" icon={<CheckOutlined />} loading={savingIntro} onClick={handleSaveIntro}>保存</Button>
+                              </div>
+                            </div>
+                          )
+                        }
+                        return (
+                          <div>
+                            {intro ? (
+                              <div className="markdown-body text-sm p-2">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                                  {intro}
+                                </ReactMarkdown>
+                              </div>
+                            ) : (
+                              <div className="text-gray-400 text-center py-8">
+                                暂无介绍，点击右上角编辑添加
+                              </div>
+                            )}
                           </div>
-                        ),
-                      }]
-                    })(),
+                        )
+                      })(),
+                    },
                   ]}
                 />
               </Card>
@@ -1210,71 +1511,131 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
 
                   <Tabs
                     size="small"
-                    defaultActiveKey={localJson ? "local" : (sseJson ? "sse" : "http")}
+                    defaultActiveKey={(() => {
+                      if (hotSseJson || hotHttpJson) return hotSseJson ? "sse" : "http"
+                      if (localJson) return "local"
+                      if (sseJson) return "sse"
+                      return "http"
+                    })()}
                     items={(() => {
-                      const tabs = [];
+                      const tabs: { key: string; label: React.ReactNode; children: React.ReactNode }[] = [];
+                      const hasHot = !!(hotSseJson || hotHttpJson)
+                      const hotHostingType = mcpMetaList[0]?.endpointHostingType || ''
+                      const isSandboxHosted = hotHostingType === 'SANDBOX'
 
+                      // 渲染沙箱托管配置
+                      const renderSandboxConfig = () => {
+                        const meta = mcpMetaList[0]
+                        if (!meta?.subscribeParams) return null
+                        let sp: Record<string, any> = {}
+                        try {
+                          sp = typeof meta.subscribeParams === 'string' ? JSON.parse(meta.subscribeParams) : meta.subscribeParams
+                        } catch { return null }
+
+                        const sandboxId = sp.sandboxId || '-'
+                        const namespace = sp.namespace || 'default'
+                        const authType = sp.authType || 'none'
+                        const extraParams: Record<string, any> = sp.extraParams || {}
+                        const extraEntries = Object.entries(extraParams).filter(([, v]) => v !== null && v !== undefined && v !== '')
+
+                        // 从 meta.extraParams 获取参数定义（name/position/required/description）
+                        let paramDefs: any[] = []
+                        try {
+                          paramDefs = meta.extraParams ? (typeof meta.extraParams === 'string' ? JSON.parse(meta.extraParams) : meta.extraParams) : []
+                        } catch { /* */ }
+
+                        return (
+                          <div className="mt-3 pt-3 border-t border-gray-100">
+                            <div className="text-xs text-gray-400 mb-2">托管配置</div>
+                            <div className="grid grid-cols-3 gap-x-3 gap-y-2 text-xs">
+                              <div>
+                                <div className="text-gray-400 mb-0.5">沙箱 ID</div>
+                                <div className="font-mono text-gray-700 truncate" title={sandboxId}>{sandboxId}</div>
+                              </div>
+                              <div>
+                                <div className="text-gray-400 mb-0.5">Namespace</div>
+                                <div className="font-mono text-gray-700">{namespace}</div>
+                              </div>
+                              <div>
+                                <div className="text-gray-400 mb-0.5">鉴权类型</div>
+                                <div className="text-gray-700">{authType}</div>
+                              </div>
+                            </div>
+                            {extraEntries.length > 0 && (
+                              <div className="mt-3 rounded-lg border border-gray-200 overflow-hidden">
+                                <div className="px-3 py-1.5 bg-gray-50 border-b border-gray-200">
+                                  <span className="text-xs font-medium text-gray-600">额外参数</span>
+                                </div>
+                                <div className="p-3 space-y-2.5">
+                                  {extraEntries.map(([key, val]) => {
+                                    const def = Array.isArray(paramDefs) ? paramDefs.find((d: any) => d.name === key) : null
+                                    return (
+                                      <div key={key}>
+                                        <div className="flex items-center gap-1.5 mb-0.5">
+                                          <span className="text-xs font-mono text-gray-700">{key}</span>
+                                          {def?.required && <span className="text-red-400 text-[10px]">*</span>}
+                                          {def?.position && <Tag className="m-0 border-0 bg-gray-100 text-gray-500 text-[10px] leading-tight px-1.5 py-0">{def.position}</Tag>}
+                                        </div>
+                                        {def?.description && <div className="text-[10px] text-gray-400 mb-0.5">{def.description}</div>}
+                                        <div className="px-2 py-1 bg-gray-50 border border-gray-200 rounded text-xs font-mono text-gray-800 break-all">{String(val)}</div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      }
+
+                      // 渲染配置 JSON 块（admin 版本，带复制按钮）
+                      const renderAdminConfigBlock = (json: string, extra?: React.ReactNode) => (
+                        <div>
+                          <div className="relative bg-gray-50 border border-gray-200 rounded-md p-3">
+                            <Button size="small" icon={<CopyOutlined />} className="absolute top-2 right-2 z-10" onClick={() => handleCopy(json)} />
+                            <div className="text-gray-800 font-mono text-xs overflow-x-auto">
+                              <pre className="whitespace-pre">{json}</pre>
+                            </div>
+                          </div>
+                          {extra}
+                        </div>
+                      )
+
+                      // Stdio 冷数据（自定义导入的本地配置）
                       if (localJson) {
                         tabs.push({
                           key: "local",
-                          label: "Stdio",
-                          children: (
-                            <div className="relative bg-gray-50 border border-gray-200 rounded-md p-3">
-                              <Button
-                                size="small"
-                                icon={<CopyOutlined />}
-                                className="absolute top-2 right-2 z-10"
-                                onClick={() => handleCopy(localJson)}
-                              >
-                              </Button>
-                              <div className="text-gray-800 font-mono text-xs overflow-x-auto">
-                                <pre className="whitespace-pre">{localJson}</pre>
-                              </div>
-                            </div>
-                          ),
-                        });
-                      } else {
-                        if (sseJson) {
-                          tabs.push({
-                            key: "sse",
-                            label: "SSE",
-                            children: (
-                              <div className="relative bg-gray-50 border border-gray-200 rounded-md p-3">
-                                <Button
-                                  size="small"
-                                  icon={<CopyOutlined />}
-                                  className="absolute top-2 right-2 z-10"
-                                  onClick={() => handleCopy(sseJson)}
-                                >
-                                </Button>
-                                <div className="text-gray-800 font-mono text-xs overflow-x-auto">
-                                  <pre className="whitespace-pre">{sseJson}</pre>
-                                </div>
-                              </div>
-                            ),
-                          });
-                        }
+                          label: hasHot ? <span>Stdio <Tag color="default" className="ml-1 mr-0" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>配置</Tag></span> : "Stdio",
+                          children: renderAdminConfigBlock(localJson),
+                        })
+                      }
 
-                        if (httpJson) {
-                          tabs.push({
-                            key: "http",
-                            label: "Streamable HTTP",
-                            children: (
-                              <div className="relative bg-gray-50 border border-gray-200 rounded-md p-3">
-                                <Button
-                                  size="small"
-                                  icon={<CopyOutlined />}
-                                  className="absolute top-2 right-2 z-10"
-                                  onClick={() => handleCopy(httpJson)}
-                                >
-                                </Button>
-                                <div className="text-gray-800 font-mono text-xs overflow-x-auto">
-                                  <pre className="whitespace-pre">{httpJson}</pre>
-                                </div>
-                              </div>
-                            ),
-                          });
-                        }
+                      // SSE：热数据优先，fallback 冷数据（localJson 存在时无冷 SSE，但热 SSE 仍需展示）
+                      const sseContent = hotSseJson || sseJson
+                      const sseIsHot = !!hotSseJson
+                      if (sseContent) {
+                        const tagEl = sseIsHot
+                          ? <Tag color={isSandboxHosted ? "green" : "blue"} className="ml-1 mr-0" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>{isSandboxHosted ? '沙箱' : hotHostingType === 'NACOS' ? 'Nacos' : '网关'}</Tag>
+                          : (hasHot ? <Tag color="default" className="ml-1 mr-0" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>配置</Tag> : null)
+                        tabs.push({
+                          key: "sse",
+                          label: <span>SSE {tagEl}</span>,
+                          children: renderAdminConfigBlock(sseContent, sseIsHot ? renderSandboxConfig() : undefined),
+                        })
+                      }
+
+                      // Streamable HTTP：热数据优先，fallback 冷数据
+                      const httpContent = hotHttpJson || httpJson
+                      const httpIsHot = !!hotHttpJson
+                      if (httpContent) {
+                        const tagEl = httpIsHot
+                          ? <Tag color={isSandboxHosted ? "green" : "blue"} className="ml-1 mr-0" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>{isSandboxHosted ? '沙箱' : hotHostingType === 'NACOS' ? 'Nacos' : '网关'}</Tag>
+                          : (hasHot ? <Tag color="default" className="ml-1 mr-0" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>配置</Tag> : null)
+                        tabs.push({
+                          key: "http",
+                          label: <span>Streamable HTTP {tagEl}</span>,
+                          children: renderAdminConfigBlock(httpContent, httpIsHot ? renderSandboxConfig() : undefined),
+                        })
                       }
 
                       return tabs;
@@ -1283,42 +1644,6 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
                 </div>
               </Card>
 
-              {/* 额外参数 */}
-              {mcpMetaList.length > 0 && (() => {
-                let allExtraParams: any[] = []
-                mcpMetaList.forEach((meta: any) => {
-                  try {
-                    const params = meta.extraParams ? JSON.parse(meta.extraParams) : []
-                    if (Array.isArray(params)) allExtraParams = allExtraParams.concat(params)
-                  } catch { /* */ }
-                })
-                if (allExtraParams.length === 0) return null
-                return (
-                  <Card className="mt-4">
-                    <h3 className="text-sm font-semibold mb-3">额外参数</h3>
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-gray-200 text-gray-500">
-                          <th className="text-left py-2 pr-3 font-medium">参数名</th>
-                          <th className="text-left py-2 pr-3 font-medium">位置</th>
-                          <th className="text-left py-2 pr-3 font-medium">必填</th>
-                          <th className="text-left py-2 font-medium">说明</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {allExtraParams.map((p: any, i: number) => (
-                          <tr key={i} className="border-b border-gray-100 last:border-0">
-                            <td className="py-2 pr-3 font-mono text-gray-800">{p.name || p.key}</td>
-                            <td className="py-2 pr-3 text-gray-500">{p.position || '-'}</td>
-                            <td className="py-2 pr-3">{p.required ? <span className="text-red-500">是</span> : <span className="text-gray-400">否</span>}</td>
-                            <td className="py-2 text-gray-500">{p.description || '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </Card>
-                )
-              })()}
             </Col>
           </Row>
         </Card>
@@ -2248,40 +2573,229 @@ export function ApiProductLinkApi({ apiProduct, linkedService, onLinkedServiceUp
         visible={isCustomConfigModalVisible}
         onCancel={() => setIsCustomConfigModalVisible(false)}
         onOk={async (values) => {
-          try {
-            const iconJson = values.icon
-              ? JSON.stringify({ type: 'BASE64', data: values.icon })
-              : values.iconUrl
-                ? JSON.stringify({ type: 'URL', url: values.iconUrl })
-                : undefined
+          const iconJson = values.icon
+            ? JSON.stringify({ type: 'BASE64', data: values.icon })
+            : values.iconUrl
+              ? JSON.stringify({ type: 'URL', url: values.iconUrl })
+              : undefined
 
-            await mcpServerApi.saveMeta({
-              productId: apiProduct.productId,
-              mcpName: values.mcpServerName,
-              displayName: values.mcpDisplayName,
-              description: values.description,
-              repoUrl: values.repoUrl,
-              sourceType: 'config',
-              origin: 'ADMIN',
-              tags: values.tags ? JSON.stringify(values.tags) : undefined,
-              icon: iconJson,
-              protocolType: values.protocolType,
-              connectionConfig: values.mcpConfigJson,
-              extraParams: values.extraParams?.length ? JSON.stringify(values.extraParams) : undefined,
-              serviceIntro: values.serviceIntro,
-              visibility: 'PUBLIC',
-              publishStatus: 'DRAFT',
-              sandboxRequired: values.sandboxRequired || false,
-            })
-            message.success('MCP 配置保存成功')
-            setIsCustomConfigModalVisible(false)
-            await fetchMcpMeta()
-            await handleRefresh()
-          } catch {
-            message.error('MCP 配置保存失败')
+          // 不 try-catch，让错误传播到 McpCustomConfigModal 的 handleSubmit
+          await mcpServerApi.saveMeta({
+            productId: apiProduct.productId,
+            mcpName: values.mcpServerName,
+            displayName: values.mcpDisplayName,
+            description: values.description,
+            repoUrl: values.repoUrl,
+            sourceType: 'config',
+            origin: 'ADMIN',
+            tags: values.tags ? JSON.stringify(values.tags) : undefined,
+            icon: iconJson,
+            protocolType: values.protocolType,
+            connectionConfig: values.mcpConfigJson,
+            extraParams: values.extraParams?.length ? JSON.stringify(values.extraParams) : undefined,
+            serviceIntro: values.serviceIntro,
+            visibility: 'PUBLIC',
+            publishStatus: 'DRAFT',
+            sandboxRequired: values.sandboxRequired || false,
+          })
+
+          // 如果需要沙箱部署且选择了立即部署，单独调用 deploySandbox
+          if (values.sandboxRequired && values.deployNow && values.sandboxId) {
+            // 先刷新 meta 获取 mcpServerId
+            const metaRes = await mcpServerApi.listMetaByProduct(apiProduct.productId)
+            const metaList = metaRes?.data || []
+            const newMeta = metaList.find((m: any) => m.mcpName === values.mcpServerName)
+            if (newMeta?.mcpServerId) {
+              await mcpServerApi.deploySandbox(newMeta.mcpServerId, {
+                sandboxId: values.sandboxId,
+                transportType: values.transportType || 'sse',
+                authType: values.authType || 'none',
+                paramValues: values.adminParamValues && Object.keys(values.adminParamValues).length > 0
+                  ? JSON.stringify(values.adminParamValues)
+                  : undefined,
+                namespace: values.namespace,
+                resourceSpec: (values.cpuRequest || values.cpuLimit || values.memoryRequest || values.memoryLimit || values.ephemeralStorage)
+                  ? JSON.stringify({
+                      cpuRequest: values.cpuRequest || undefined,
+                      cpuLimit: values.cpuLimit || undefined,
+                      memoryRequest: values.memoryRequest || undefined,
+                      memoryLimit: values.memoryLimit || undefined,
+                      ephemeralStorage: values.ephemeralStorage || undefined,
+                    })
+                  : undefined,
+              })
+            }
           }
+
+          // 成功后刷新数据
+          setIsCustomConfigModalVisible(false)
+          await fetchMcpMeta()
+          await handleRefresh()
         }}
       />
+
+      {/* 部署到沙箱弹窗 */}
+      <Modal
+        title="部署到沙箱"
+        open={!!deployModalMcpServerId}
+        onCancel={() => { setDeployModalMcpServerId(null); deployForm.resetFields(); setDeployParamValues({}); setDeployResourcePreset('small') }}
+        onOk={handleDeploySandbox}
+        confirmLoading={deploying}
+        okText="开始部署"
+        width={600}
+        destroyOnClose
+      >
+        <Form form={deployForm} layout="vertical" initialValues={{ transportType: 'sse', authType: 'none', resourcePreset: 'small', cpuRequest: '250m', cpuLimit: '500m', memoryRequest: '256Mi', memoryLimit: '512Mi', ephemeralStorage: '1Gi' }}>
+          <div className="space-y-4">
+            {/* 部署目标 */}
+            <div className="rounded-lg border border-gray-200 overflow-hidden">
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+                <span className="text-xs font-medium text-gray-600">部署目标</span>
+              </div>
+              <div className="p-4 space-y-3">
+                <Form.Item label="沙箱实例" name="sandboxId" rules={[{ required: true, message: '请选择沙箱' }]} className="mb-0">
+                  <Select
+                    placeholder="选择沙箱实例"
+                    loading={deploySandboxLoading}
+                    onChange={handleDeploySandboxChange}
+                    options={deploySandboxList.map((s: any) => ({
+                      value: s.sandboxId,
+                      label: `${s.sandboxName || s.sandboxId}${s.status === 'RUNNING' ? '' : ' (不健康)'}`,
+                      disabled: s.status !== 'RUNNING',
+                    }))}
+                  />
+                </Form.Item>
+                <Form.Item
+                  label="Namespace" name="namespace"
+                  rules={[{ required: true, message: '请选择 Namespace' }]}
+                  className="mb-0"
+                  extra={!deploySandboxIdValue ? <span className="text-[10px] text-gray-400">请先选择沙箱实例</span> : undefined}
+                >
+                  <Select
+                    placeholder={deployNamespaceLoading ? '加载中...' : '选择 Namespace'}
+                    loading={deployNamespaceLoading}
+                    disabled={!deploySandboxIdValue}
+                    showSearch
+                    options={deployNamespaceList.map((ns) => ({ value: ns, label: ns }))}
+                  />
+                </Form.Item>
+                {(() => {
+                  const meta = mcpMetaList.find((m: any) => m.mcpServerId === deployModalMcpServerId)
+                  const isStdio = meta?.protocolType?.toLowerCase() === 'stdio'
+                  return !isStdio ? (
+                    <Form.Item label="传输协议" name="transportType" className="mb-0">
+                      <Radio.Group size="small" optionType="button" buttonStyle="solid">
+                        <Radio.Button value="sse">SSE</Radio.Button>
+                        <Radio.Button value="http">Streamable HTTP</Radio.Button>
+                      </Radio.Group>
+                    </Form.Item>
+                  ) : null
+                })()}
+                <Form.Item label="鉴权方式" name="authType" className="mb-0">
+                  <Select>
+                    <Select.Option value="none">无鉴权</Select.Option>
+                    <Select.Option value="bearer" disabled>Bearer Token（即将开放）</Select.Option>
+                  </Select>
+                </Form.Item>
+              </div>
+            </div>
+
+            {/* 资源规格 */}
+            <div className="rounded-lg border border-gray-200 overflow-hidden">
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+                <span className="text-xs font-medium text-gray-600">资源规格</span>
+              </div>
+              <div className="p-4">
+                <Form.Item name="resourcePreset" className={deployResourcePreset === 'custom' ? 'mb-3' : 'mb-0'}>
+                  <Radio.Group
+                    className="w-full"
+                    value={deployResourcePreset}
+                    onChange={(e) => {
+                      setDeployResourcePreset(e.target.value)
+                      const presets: Record<string, any> = {
+                        small:  { cpuRequest: '250m', cpuLimit: '500m', memoryRequest: '256Mi', memoryLimit: '512Mi', ephemeralStorage: '1Gi' },
+                        medium: { cpuRequest: '500m', cpuLimit: '1',    memoryRequest: '512Mi', memoryLimit: '1Gi',  ephemeralStorage: '2Gi' },
+                        large:  { cpuRequest: '1',    cpuLimit: '2',    memoryRequest: '1Gi',   memoryLimit: '2Gi',  ephemeralStorage: '4Gi' },
+                      }
+                      const p = presets[e.target.value]
+                      if (p) deployForm.setFieldsValue(p)
+                    }}
+                  >
+                    <div className="grid grid-cols-4 gap-2">
+                      {[
+                        { value: 'small',  label: '小型', desc: '0.5C / 512Mi' },
+                        { value: 'medium', label: '中型', desc: '1C / 1Gi' },
+                        { value: 'large',  label: '大型', desc: '2C / 2Gi' },
+                        { value: 'custom', label: '自定义', desc: '手动配置' },
+                      ].map((item) => (
+                        <Radio.Button
+                          key={item.value}
+                          value={item.value}
+                          className="h-auto text-center flex-1"
+                          style={{ padding: '8px 0', lineHeight: 1.3 }}
+                        >
+                          <div className="text-xs font-medium">{item.label}</div>
+                          <div className="text-[10px] text-gray-400 mt-0.5">{item.desc}</div>
+                        </Radio.Button>
+                      ))}
+                    </div>
+                  </Radio.Group>
+                </Form.Item>
+                {deployResourcePreset === 'custom' ? (
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2 pt-1 border-t border-gray-100">
+                    <Form.Item name="cpuRequest" label="CPU Request" className="mb-0"><Input size="small" className="font-mono text-xs" /></Form.Item>
+                    <Form.Item name="cpuLimit" label="CPU Limit" className="mb-0"><Input size="small" className="font-mono text-xs" /></Form.Item>
+                    <Form.Item name="memoryRequest" label="Memory Request" className="mb-0"><Input size="small" className="font-mono text-xs" /></Form.Item>
+                    <Form.Item name="memoryLimit" label="Memory Limit" className="mb-0"><Input size="small" className="font-mono text-xs" /></Form.Item>
+                    <Form.Item name="ephemeralStorage" label="临时存储" className="mb-0"><Input size="small" className="font-mono text-xs" /></Form.Item>
+                  </div>
+                ) : (
+                  <>
+                    <Form.Item name="cpuRequest" hidden><Input /></Form.Item>
+                    <Form.Item name="cpuLimit" hidden><Input /></Form.Item>
+                    <Form.Item name="memoryRequest" hidden><Input /></Form.Item>
+                    <Form.Item name="memoryLimit" hidden><Input /></Form.Item>
+                    <Form.Item name="ephemeralStorage" hidden><Input /></Form.Item>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* 参数值配置 */}
+            {(() => {
+              const paramDefs = getDeployExtraParamDefs()
+              if (paramDefs.length === 0) return null
+              return (
+                <div className="rounded-lg border border-gray-200 overflow-hidden">
+                  <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+                    <span className="text-xs font-medium text-gray-600">参数值配置</span>
+                    <span className="text-[10px] text-gray-400 ml-2">部署时注入的环境变量 / 请求参数</span>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    {paramDefs.map((p: any) => (
+                      <div key={p.name}>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-xs font-mono text-gray-700">{p.name}</span>
+                          {p.required && <span className="text-red-400 text-[10px]">*</span>}
+                          <Tag className="m-0 border-0 bg-gray-100 text-gray-500 text-[10px] leading-tight px-1.5 py-0">{p.position}</Tag>
+                        </div>
+                        {p.description && <div className="text-[10px] text-gray-400 mb-1">{p.description}</div>}
+                        <Input
+                          size="small"
+                          placeholder={p.example || `请输入 ${p.name}`}
+                          value={deployParamValues[p.name] || ''}
+                          onChange={(e) => setDeployParamValues(prev => ({ ...prev, [p.name]: e.target.value }))}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+          </div>
+        </Form>
+      </Modal>
 
     </div>
   )

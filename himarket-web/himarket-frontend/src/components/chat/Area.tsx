@@ -66,6 +66,11 @@ export function ChatArea(props: ChatAreaProps) {
   const addedMcpsRef = useRef<IProductDetail[]>([]);
   const [mcpSubscripts, setMcpSubscripts] = useState<ISubscription[]>([]);
   const [mcpEndpointProductIds, setMcpEndpointProductIds] = useState<Set<string>>(new Set());
+  // 从 consumer subscriptions 派生已订阅的 MCP productId 集合
+  useEffect(() => {
+    const ids = new Set(mcpSubscripts.filter(s => s.status === 'APPROVED').map(s => s.productId));
+    setMcpEndpointProductIds(ids);
+  }, [mcpSubscripts]);
   const [modelSubscriptions, setModelSubscriptions] = useState<ISubscription[]>([]);
   const [mcpEnabled, setMcpEnabled] = useState(() => {
     return safeJSONParse(window.localStorage.getItem("mcpEnabled") || "false", false)
@@ -168,18 +173,11 @@ export function ChatArea(props: ChatAreaProps) {
 
   const handleQuickSubscribe = useCallback((product: IProductDetail) => {
     if (!primaryConsumer.current) return;
-    // 弹窗内已完成 MCP endpoint 订阅，这里补充 consumer 订阅 + 刷新列表
-    APIs.subscribeProduct(primaryConsumer.current.consumerId, product.productId)
+    // 弹窗内已完成产品订阅，这里只刷新订阅列表
+    APIs.getConsumerSubscriptions(primaryConsumer.current.consumerId, { size: 1000 })
       .then(({ data }) => {
-        if (data) {
-          APIs.getConsumerSubscriptions(data.consumerId, { size: 1000 })
-            .then(({ data }) => {
-              setMcpSubscripts(data.content);
-            })
-        }
-      }).catch(() => {
-        // consumer 订阅失败不影响，MCP endpoint 已订阅成功
-      })
+        setMcpSubscripts(data.content);
+      }).catch(() => {});
   }, []);
 
   const handleMcpEnable = (enable: boolean) => {
@@ -231,14 +229,7 @@ export function ChatArea(props: ChatAreaProps) {
             ));
           })
       })
-    // 加载用户的 MCP endpoint（与"我的MCP"一致）
-    APIs.getMyEndpoints()
-      .then(({ data }) => {
-        if (data) {
-          setMcpEndpointProductIds(new Set(data.filter(ep => ep.productId).map(ep => ep.productId)));
-        }
-      })
-      .catch(() => {});
+
   }, []);
 
   return (

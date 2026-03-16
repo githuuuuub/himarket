@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS `mcp_server_meta` (
     `publish_status` varchar(32) NOT NULL DEFAULT 'DRAFT' COMMENT 'DRAFT / PUBLISHED',
     `tools_config` json DEFAULT NULL,
     `created_by` varchar(64) DEFAULT NULL,
+    `sandbox_required` tinyint(1) DEFAULT NULL,
     `created_at` datetime(3) DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` datetime(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),

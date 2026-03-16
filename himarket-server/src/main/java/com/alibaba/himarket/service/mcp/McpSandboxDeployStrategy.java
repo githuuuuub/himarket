@@ -27,6 +27,8 @@ public interface McpSandboxDeployStrategy {
      * @param authType        鉴权方式：none / bearer
      * @param userParams      用户提交的参数值 JSON
      * @param extraParamsDef  额外参数定义 JSON（含 position 信息）
+     * @param namespace       部署目标 Namespace（为空时使用 "default"）
+     * @param resourceSpec    资源规格 JSON（CPU/内存等）
      * @return endpoint URL
      */
     String deploy(
@@ -39,14 +41,17 @@ public interface McpSandboxDeployStrategy {
             String apiKey,
             String authType,
             String userParams,
-            String extraParamsDef);
+            String extraParamsDef,
+            String namespace,
+            String resourceSpec);
 
     /**
      * 删除沙箱集群中的 ToolServer CRD。
      *
-     * @param sandbox  沙箱实例
-     * @param mcpName  MCP Server 名称
-     * @param userId   订阅用户 ID
+     * @param sandbox    沙箱实例
+     * @param mcpName    MCP Server 名称
+     * @param userId     订阅用户 ID
+     * @param namespace  部署时使用的 Namespace（为空时使用 "default"）
      */
-    void undeploy(SandboxInstance sandbox, String mcpName, String userId);
+    void undeploy(SandboxInstance sandbox, String mcpName, String userId, String namespace);
 }

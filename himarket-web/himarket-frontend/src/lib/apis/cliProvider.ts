@@ -64,8 +64,8 @@ export function getMarketModels() {
 export interface MarketMcpInfo {
   productId: string;
   name: string;
-  url: string;
-  transportType: string;
+  url?: string;
+  transportType?: string;
   description: string;
 }
 

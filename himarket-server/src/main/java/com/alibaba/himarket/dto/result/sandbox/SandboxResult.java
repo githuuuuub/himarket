@@ -43,8 +43,6 @@ public class SandboxResult implements OutputConverter<SandboxResult, SandboxInst
 
     private String apiServer;
 
-    private String namespace;
-
     private String description;
 
     private String extraConfig;

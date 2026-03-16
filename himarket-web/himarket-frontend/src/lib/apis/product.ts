@@ -96,6 +96,16 @@ export interface IMcpMeta {
   sandboxRequired: boolean;
   createdBy: string;
   createAt: string;
+  /** 沙箱托管后的 endpoint URL（热数据，userId=* 公共端点） */
+  endpointUrl?: string;
+  /** endpoint 协议（热数据） */
+  endpointProtocol?: string;
+  /** endpoint 状态 */
+  endpointStatus?: string;
+  /** endpoint 的 subscribeParams */
+  subscribeParams?: string;
+  /** endpoint 的托管类型（SANDBOX / GATEWAY / NACOS / DIRECT） */
+  endpointHostingType?: string;
 }
 
 // 获取产品关联的 MCP 元信息

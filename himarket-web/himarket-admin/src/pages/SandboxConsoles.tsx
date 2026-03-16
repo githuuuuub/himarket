@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Button, Table, message, Modal, Tabs, Tag, Form, Input, Select, Steps, Result, Space, Tooltip, Checkbox } from 'antd'
+import { Button, Table, message, Modal, Tabs, Tag, Form, Input, Steps, Space, Tooltip } from 'antd'
 import {
   PlusOutlined, ApiOutlined, CheckCircleOutlined, LoadingOutlined,
-  EditOutlined, CloudServerOutlined, AppstoreOutlined, CloseCircleOutlined,
-  ReloadOutlined, SyncOutlined, SettingOutlined,
+  EditOutlined, CloudServerOutlined, CloseCircleOutlined,
+  ReloadOutlined, SyncOutlined,
 } from '@ant-design/icons'
 import { formatDateTime } from '@/lib/utils'
 import { sandboxApi } from '@/lib/api'
@@ -18,44 +18,12 @@ export interface SandboxInstance {
   sandboxType: SandboxType
   clusterAttribute?: string
   apiServer: string
-  namespace: string
   description?: string
   extraConfig?: string
   status: 'RUNNING' | 'STOPPED' | 'ERROR'
   statusMessage?: string
   lastCheckedAt?: string
   createAt: string
-}
-
-interface ResourceSpec {
-  cpuRequest?: string
-  cpuLimit?: string
-  memoryRequest?: string
-  memoryLimit?: string
-  ephemeralStorage?: string
-}
-
-interface ExtraConfig {
-  resourceSpec?: ResourceSpec
-  image?: string
-  capabilities?: string[]
-}
-
-const CAPABILITY_OPTIONS = [
-  { label: 'MCP 托管', value: 'MCP_HOSTING' },
-  { label: 'Agent 托管', value: 'AGENT_HOSTING' },
-  { label: 'Coding 环境', value: 'CODING' },
-]
-
-const RESOURCE_PRESETS = [
-  { label: '小型 (0.5C1G)', cpuLimit: '500m', cpuRequest: '125m', memoryLimit: '1Gi', memoryRequest: '256Mi', storage: '1Gi' },
-  { label: '中型 (2C4G)', cpuLimit: '2', cpuRequest: '500m', memoryLimit: '4Gi', memoryRequest: '1Gi', storage: '1Gi' },
-  { label: '大型 (4C8G)', cpuLimit: '4', cpuRequest: '1', memoryLimit: '8Gi', memoryRequest: '2Gi', storage: '1Gi' },
-]
-
-function parseExtraConfig(raw?: string): ExtraConfig {
-  if (!raw) return {}
-  try { return JSON.parse(raw) } catch { return {} }
 }
 
 // ==================== 组件 ====================
@@ -71,14 +39,11 @@ export default function SandboxConsoles() {
   const [fetching, setFetching] = useState(false)
   const [clusterFetched, setClusterFetched] = useState(false)
   const [fetchFailed, setFetchFailed] = useState(false)
-  const [namespaceList, setNamespaceList] = useState<string[]>([])
   const [importStep, setImportStep] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [checkingId, setCheckingId] = useState<string | null>(null)
 
   const isAgentRuntime = activeTab === 'AGENT_RUNTIME'
-  // AGENT_RUNTIME: 3 steps (基本信息 → 连接集群 → 配置沙箱)
-  // SELF_HOSTED:   3 steps (基本信息 → 连接集群 → 选择Namespace)
 
   const fetchList = useCallback(async (type: SandboxType, page = 1, size = 10) => {
     setLoading(true)
@@ -102,7 +67,6 @@ export default function SandboxConsoles() {
   const resetModalState = () => {
     setClusterFetched(false)
     setFetchFailed(false)
-    setNamespaceList([])
     setImportStep(0)
   }
 
@@ -120,24 +84,14 @@ export default function SandboxConsoles() {
 
   const handleEdit = (record: SandboxInstance) => {
     setEditingSandbox(record)
-    const extra = parseExtraConfig(record.extraConfig)
     form.setFieldsValue({
       sandboxName: record.sandboxName,
-      namespace: record.namespace,
       description: record.description,
-      image: extra.image,
-      capabilities: extra.capabilities || [],
-      cpuRequest: extra.resourceSpec?.cpuRequest,
-      cpuLimit: extra.resourceSpec?.cpuLimit,
-      memoryRequest: extra.resourceSpec?.memoryRequest,
-      memoryLimit: extra.resourceSpec?.memoryLimit,
-      ephemeralStorage: extra.resourceSpec?.ephemeralStorage,
     })
     setClusterFetched(true)
     setFetchFailed(false)
-    setNamespaceList([record.namespace])
-    // 编辑时直接跳到 namespace 步骤（step 2）
-    setImportStep(2)
+    // 编辑时跳到 step 1（连接集群）
+    setImportStep(1)
     setModalVisible(true)
   }
 
@@ -174,16 +128,12 @@ export default function SandboxConsoles() {
     setFetching(true)
     setClusterFetched(false)
     setFetchFailed(false)
-    setNamespaceList([])
-    form.setFieldsValue({ namespace: undefined })
     try {
       const res: any = await sandboxApi.fetchClusterInfo(kubeConfig)
       const result = res.data || res
       if (result.ok) {
         setClusterFetched(true)
-        setNamespaceList(result.namespaces || [])
-        setImportStep(2)
-        message.success(`获取成功，发现 ${(result.namespaces || []).length} 个 Namespace`)
+        message.success('集群连接成功')
       } else {
         setFetchFailed(true)
         message.error(result.message || '获取集群信息失败，请检查 KubeConfig')
@@ -194,41 +144,18 @@ export default function SandboxConsoles() {
     } finally { setFetching(false) }
   }
 
-  const applyResourcePreset = (preset: typeof RESOURCE_PRESETS[0]) => {
-    form.setFieldsValue({
-      cpuRequest: preset.cpuRequest,
-      cpuLimit: preset.cpuLimit,
-      memoryRequest: preset.memoryRequest,
-      memoryLimit: preset.memoryLimit,
-      ephemeralStorage: preset.storage,
-    })
-  }
 
   const handleModalOk = async () => {
-    if (!clusterFetched) { message.warning('请先获取集群信息并选择 Namespace'); return }
+    if (!clusterFetched && !editingSandbox) { message.warning('请先验证集群连通性'); return }
     try {
       const values = form.getFieldsValue(true)
       setSubmitting(true)
-
-      const resourceSpec = (values.cpuRequest || values.cpuLimit || values.memoryRequest || values.memoryLimit || values.ephemeralStorage)
-        ? {
-            cpuRequest: values.cpuRequest || undefined,
-            cpuLimit: values.cpuLimit || undefined,
-            memoryRequest: values.memoryRequest || undefined,
-            memoryLimit: values.memoryLimit || undefined,
-            ephemeralStorage: values.ephemeralStorage || undefined,
-          }
-        : undefined
 
       if (editingSandbox) {
         await sandboxApi.updateSandbox(editingSandbox.sandboxId, {
           sandboxName: values.sandboxName,
           kubeConfig: values.kubeConfig,
-          namespace: values.namespace,
           description: values.description,
-          resourceSpec,
-          image: values.image || undefined,
-          capabilities: values.capabilities?.length ? values.capabilities : undefined,
         })
         message.success('更新成功')
       } else {
@@ -236,11 +163,7 @@ export default function SandboxConsoles() {
           sandboxName: values.sandboxName,
           sandboxType: activeTab,
           kubeConfig: values.kubeConfig,
-          namespace: values.namespace,
           description: values.description,
-          resourceSpec,
-          image: values.image || undefined,
-          capabilities: values.capabilities?.length ? values.capabilities : undefined,
         })
         message.success('导入成功')
       }
@@ -270,11 +193,6 @@ export default function SandboxConsoles() {
     return <Tag color={s.color}>{s.text}</Tag>
   }
 
-  const capabilityLabel = (cap: string) => {
-    const found = CAPABILITY_OPTIONS.find((c) => c.value === cap)
-    return found ? found.label : cap
-  }
-
   const columns = [
     {
       title: '实例名称/ID', key: 'nameAndId', width: 260,
@@ -286,36 +204,22 @@ export default function SandboxConsoles() {
       ),
     },
     {
-      title: 'API Server', dataIndex: 'apiServer', key: 'apiServer', ellipsis: true,
-      render: (v: string) => <span className="text-xs font-mono">{v}</span>,
+      title: '集群 ID', key: 'clusterId', width: 220,
+      render: (_: any, record: SandboxInstance) => {
+        try {
+          const attr = record.clusterAttribute ? JSON.parse(record.clusterAttribute) : {}
+          return attr.clusterId
+            ? <Tooltip title={attr.clusterId}><span className="text-xs font-mono text-gray-600 truncate block max-w-[200px]">{attr.clusterId}</span></Tooltip>
+            : <span className="text-xs text-gray-400">-</span>
+        } catch {
+          return <span className="text-xs text-gray-400">-</span>
+        }
+      },
     },
     {
-      title: 'Namespace', dataIndex: 'namespace', key: 'namespace', width: 140,
-      render: (v: string) => <Tag className="m-0 font-mono">{v}</Tag>,
+      title: 'API Server', dataIndex: 'apiServer', key: 'apiServer', width: 220, ellipsis: true,
+      render: (v: string) => <Tooltip title={v}><span className="text-xs font-mono">{v}</span></Tooltip>,
     },
-    ...(isAgentRuntime ? [{
-      title: '功能 / 规格', key: 'spec', width: 200,
-      render: (_: any, record: SandboxInstance) => {
-        const extra = parseExtraConfig(record.extraConfig)
-        return (
-          <div className="space-y-1">
-            {extra.capabilities?.length ? (
-              <div className="flex flex-wrap gap-1">
-                {extra.capabilities.map((c) => <Tag key={c} color="blue" className="m-0 text-xs">{capabilityLabel(c)}</Tag>)}
-              </div>
-            ) : null}
-            {extra.resourceSpec?.cpuLimit && (
-              <div className="text-xs text-gray-500">{extra.resourceSpec.cpuLimit}C / {extra.resourceSpec.memoryLimit}</div>
-            )}
-            {extra.image && (
-              <Tooltip title={extra.image}>
-                <div className="text-xs text-gray-400 truncate max-w-[180px]">{extra.image.split('/').pop()}</div>
-              </Tooltip>
-            )}
-          </div>
-        )
-      },
-    }] : []),
     {
       title: '状态', dataIndex: 'status', key: 'status', width: 160,
       render: (_: SandboxInstance['status'], record: SandboxInstance) => (
@@ -397,7 +301,6 @@ export default function SandboxConsoles() {
   const stepItems = [
     { title: '基本信息', icon: <EditOutlined /> },
     { title: '连接集群', icon: <CloudServerOutlined /> },
-    { title: isAgentRuntime ? '配置沙箱' : '选择 Namespace', icon: isAgentRuntime ? <SettingOutlined /> : <AppstoreOutlined /> },
   ]
 
   return (
@@ -447,7 +350,7 @@ export default function SandboxConsoles() {
                   placeholder={`apiVersion: v1\nclusters:\n- cluster:\n    server: https://your-k8s-api:6443\n  name: my-cluster\n...`}
                   autoSize={{ minRows: 10, maxRows: 18 }}
                   className="font-mono text-xs"
-                  onChange={() => { setClusterFetched(false); setFetchFailed(false); setNamespaceList([]); form.setFieldsValue({ namespace: undefined }) }}
+                  onChange={() => { setClusterFetched(false); setFetchFailed(false) }}
                 />
               </Form.Item>
               {clusterFetched ? (
@@ -455,71 +358,6 @@ export default function SandboxConsoles() {
               ) : fetchFailed ? (
                 <div className="flex items-center gap-2 text-red-500 text-sm"><CloseCircleOutlined /> 连接失败，请检查 KubeConfig</div>
               ) : null}
-            </div>
-          )}
-
-          {/* ── Step 2: 配置沙箱 ── */}
-          {importStep === 2 && (
-            <div style={{ minHeight: 200 }}>
-              {namespaceList.length > 0 ? (
-                <>
-                  <div className="text-sm text-gray-500 mb-4">
-                    选择目标命名空间{isAgentRuntime ? '，并配置沙箱的资源规格与功能' : ''}。
-                  </div>
-
-                  <Form.Item name="namespace" label="Namespace" rules={[{ required: true, message: '请选择 Namespace' }]}>
-                    <Select placeholder="请选择 Namespace" showSearch>
-                      {namespaceList.map((ns) => <Select.Option key={ns} value={ns}>{ns}</Select.Option>)}
-                    </Select>
-                  </Form.Item>
-
-                  {isAgentRuntime && (
-                    <>
-                      {/* 容器镜像 */}
-                      <Form.Item name="image" label="容器镜像" rules={[{ required: true, message: '请输入容器镜像' }]}>
-                        <Input placeholder="例如：registry.example.com/agent-runtime:latest" />
-                      </Form.Item>
-
-                      {/* 沙箱功能 */}
-                      <Form.Item name="capabilities" label="沙箱功能">
-                        <Checkbox.Group options={CAPABILITY_OPTIONS} />
-                      </Form.Item>
-
-                      {/* 资源规格 */}
-                      <div className="border-t border-gray-100 mt-2 pt-3 mb-3">
-                        <div className="flex items-center justify-between mb-3">
-                          <span className="text-sm font-medium text-gray-700">资源规格</span>
-                          <Space size={4}>
-                            {RESOURCE_PRESETS.map((p) => (
-                              <Button key={p.label} size="small" onClick={() => applyResourcePreset(p)}>{p.label}</Button>
-                            ))}
-                          </Space>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-x-4">
-                        <Form.Item name="cpuRequest" label="CPU Request">
-                          <Input placeholder="125m" />
-                        </Form.Item>
-                        <Form.Item name="cpuLimit" label="CPU Limit">
-                          <Input placeholder="500m" />
-                        </Form.Item>
-                        <Form.Item name="memoryRequest" label="Memory Request">
-                          <Input placeholder="256Mi" />
-                        </Form.Item>
-                        <Form.Item name="memoryLimit" label="Memory Limit">
-                          <Input placeholder="1Gi" />
-                        </Form.Item>
-                      </div>
-                      <Form.Item name="ephemeralStorage" label="临时存储空间" initialValue="1Gi">
-                        <Input placeholder="1Gi" />
-                      </Form.Item>
-                    </>
-                  )}
-                </>
-              ) : (
-                <Result status="warning" title="未获取到 Namespace" subTitle="请返回上一步检查 KubeConfig 并重新获取集群信息" />
-              )}
             </div>
           )}
         </Form>
@@ -539,18 +377,15 @@ export default function SandboxConsoles() {
               }}>下一步</Button>
             )}
             {importStep === 1 && (
-              <Button type="primary" icon={fetching ? <LoadingOutlined /> : <ApiOutlined />} loading={fetching} onClick={handleFetchCluster}>
-                {clusterFetched ? '下一步' : '获取集群信息'}
-              </Button>
-            )}
-            {importStep === 2 && (
-              <Button type="primary" loading={submitting} onClick={async () => {
-                try {
-                  const fields = isAgentRuntime ? ['namespace', 'image'] : ['namespace']
-                  await form.validateFields(fields)
-                  handleModalOk()
-                } catch { /* */ }
-              }}>{editingSandbox ? '保存' : '确认导入'}</Button>
+              clusterFetched ? (
+                <Button type="primary" loading={submitting} onClick={handleModalOk}>
+                  {editingSandbox ? '保存' : '确认导入'}
+                </Button>
+              ) : (
+                <Button type="primary" icon={fetching ? <LoadingOutlined /> : <ApiOutlined />} loading={fetching} onClick={handleFetchCluster}>
+                  验证连通性
+                </Button>
+              )
             )}
           </Space>
         </div>

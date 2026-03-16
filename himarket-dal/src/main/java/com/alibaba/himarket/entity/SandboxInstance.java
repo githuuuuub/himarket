@@ -63,9 +63,6 @@ public class SandboxInstance extends BaseEntity {
     @Column(name = "api_server", length = 256)
     private String apiServer;
 
-    @Column(name = "namespace", length = 128)
-    private String namespace;
-
     @Column(name = "kube_config", columnDefinition = "text")
     private String kubeConfig;
 

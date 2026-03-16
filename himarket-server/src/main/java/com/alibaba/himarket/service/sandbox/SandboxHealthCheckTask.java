@@ -68,15 +68,6 @@ public class SandboxHealthCheckTask {
             // 尝试列出 namespace 验证连通性
             client.namespaces().list();
 
-            // 检查目标 namespace 是否存在
-            String ns = sandbox.getNamespace();
-            if (ns != null && !ns.isBlank()) {
-                var namespace = client.namespaces().withName(ns).get();
-                if (namespace == null) {
-                    updateStatus(sandbox, "ERROR", "Namespace '" + ns + "' 不存在");
-                    return;
-                }
-            }
             updateStatus(sandbox, "RUNNING", null);
         } catch (Exception e) {
             String msg = e.getMessage();

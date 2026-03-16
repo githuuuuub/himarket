@@ -311,6 +311,29 @@ export function ApiProductOverview({ apiProduct, linkedService, onEdit }: ApiPro
                   <span className="col-span-5 text-xs text-gray-700 leading-relaxed">{meta.description}</span>
                 </div>
               )}
+              {meta.sandboxRequired && meta.endpointUrl && (
+                <div className="grid grid-cols-6 gap-8 items-center pt-2 pb-2">
+                  <span className="text-xs text-gray-600">沙箱连接点:</span>
+                  <div className="col-span-5 flex items-center gap-2">
+                    <Tag color={meta.endpointStatus === 'ACTIVE' ? 'green' : 'default'} className="m-0">
+                      {meta.endpointStatus === 'ACTIVE' ? '运行中' : meta.endpointStatus || '未知'}
+                    </Tag>
+                    <span className="text-xs text-gray-700 font-mono break-all">{meta.endpointUrl}</span>
+                    <CopyOutlined
+                      className="text-gray-400 hover:text-blue-600 cursor-pointer transition-colors flex-shrink-0"
+                      style={{ fontSize: '12px' }}
+                      onClick={async () => {
+                        try {
+                          await copyToClipboard(meta.endpointUrl);
+                          message.success('连接地址已复制');
+                        } catch {
+                          message.error('复制失败');
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </Card>

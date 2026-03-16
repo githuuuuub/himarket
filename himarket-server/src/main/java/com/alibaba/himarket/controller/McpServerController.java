@@ -99,6 +99,36 @@ public class McpServerController {
         return mcpServerService.listMetaByProduct(productId);
     }
 
+    @Operation(summary = "刷新工具列表（连接 endpoint 获取 tools/list）")
+    @PostMapping("/meta/{mcpServerId}/refresh-tools")
+    @AdminAuth
+    public McpMetaResult refreshTools(@PathVariable String mcpServerId) {
+        return mcpServerService.refreshTools(mcpServerId);
+    }
+
+    @Operation(summary = "更新服务介绍")
+    @PutMapping("/meta/{mcpServerId}/service-intro")
+    @AdminAuth
+    public McpMetaResult updateServiceIntro(
+            @PathVariable String mcpServerId, @RequestBody java.util.Map<String, String> body) {
+        return mcpServerService.updateServiceIntro(mcpServerId, body.get("serviceIntro"));
+    }
+
+    @Operation(summary = "管理员手动部署沙箱（为已保存的 MCP 配置部署沙箱 endpoint）")
+    @PostMapping("/meta/{mcpServerId}/deploy-sandbox")
+    @AdminAuth
+    public McpMetaResult deploySandbox(
+            @PathVariable String mcpServerId, @RequestBody java.util.Map<String, String> body) {
+        SaveMcpMetaParam param = new SaveMcpMetaParam();
+        param.setSandboxId(body.get("sandboxId"));
+        param.setTransportType(body.get("transportType"));
+        param.setAuthType(body.get("authType"));
+        param.setParamValues(body.get("paramValues"));
+        param.setNamespace(body.get("namespace"));
+        param.setResourceSpec(body.get("resourceSpec"));
+        return mcpServerService.deploySandbox(mcpServerId, param);
+    }
+
     @Operation(summary = "获取 MCP Server 的所有 endpoint")
     @GetMapping("/endpoints")
     public List<McpEndpointResult> listEndpoints(@RequestParam String mcpServerId) {

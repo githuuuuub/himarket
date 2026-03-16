@@ -62,26 +62,7 @@ public class SandboxServiceImpl implements SandboxService {
 
     @Override
     public List<SandboxSimpleResult> listMcpCapableSandboxes() {
-        return sandboxInstanceRepository.findByStatus("RUNNING").stream()
-                .filter(
-                        s -> {
-                            if (StrUtil.isBlank(s.getExtraConfig())) return false;
-                            try {
-                                cn.hutool.json.JSONObject json =
-                                        JSONUtil.parseObj(s.getExtraConfig());
-                                cn.hutool.json.JSONArray caps = json.getJSONArray("capabilities");
-                                return caps != null && caps.contains("MCP_HOSTING");
-                            } catch (Exception e) {
-                                return false;
-                            }
-                        })
-                .map(
-                        s ->
-                                SandboxSimpleResult.builder()
-                                        .sandboxId(s.getSandboxId())
-                                        .sandboxName(s.getSandboxName())
-                                        .build())
-                .collect(Collectors.toList());
+        return listActiveSandboxes();
     }
 
     @Override
@@ -137,9 +118,6 @@ public class SandboxServiceImpl implements SandboxService {
             sandbox.setApiServer(apiServer);
             sandbox.setClusterAttribute(clusterAttribute);
             sandbox.setStatus("RUNNING");
-            sandbox.setExtraConfig(
-                    buildExtraConfig(
-                            param.getResourceSpec(), param.getImage(), param.getCapabilities()));
 
             sandboxInstanceRepository.save(sandbox);
         } catch (BusinessException e) {
@@ -188,14 +166,6 @@ public class SandboxServiceImpl implements SandboxService {
         }
 
         param.update(sandbox);
-        // 更新资源规格/镜像/功能到 extraConfig
-        if (param.getResourceSpec() != null
-                || param.getImage() != null
-                || param.getCapabilities() != null) {
-            sandbox.setExtraConfig(
-                    buildExtraConfig(
-                            param.getResourceSpec(), param.getImage(), param.getCapabilities()));
-        }
         try {
             sandboxInstanceRepository.saveAndFlush(sandbox);
         } catch (DataIntegrityViolationException e) {
@@ -246,6 +216,21 @@ public class SandboxServiceImpl implements SandboxService {
         }
     }
 
+    @Override
+    public List<String> listNamespaces(String sandboxId) {
+        SandboxInstance sandbox = findSandbox(sandboxId);
+        if (StrUtil.isBlank(sandbox.getKubeConfig())) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "沙箱实例未配置 KubeConfig");
+        }
+        try {
+            KubernetesClient client = K8sClientUtils.getClient(sandbox.getKubeConfig());
+            return K8sClientUtils.listNamespaces(client);
+        } catch (Exception e) {
+            throw new BusinessException(
+                    ErrorCode.INTERNAL_ERROR, "获取 Namespace 列表失败: " + e.getMessage());
+        }
+    }
+
     private String buildClusterAttribute(KubernetesClient client) {
         cn.hutool.json.JSONObject json = JSONUtil.createObj();
         json.set("clusterId", K8sClientUtils.getClusterId(client));
@@ -279,22 +264,5 @@ public class SandboxServiceImpl implements SandboxService {
 
             return cb.and(predicates.toArray(new Predicate[0]));
         };
-    }
-
-    private String buildExtraConfig(
-            ImportSandboxParam.ResourceSpec resourceSpec,
-            String image,
-            java.util.List<String> capabilities) {
-        cn.hutool.json.JSONObject json = JSONUtil.createObj();
-        if (resourceSpec != null) {
-            json.set("resourceSpec", JSONUtil.parse(JSONUtil.toJsonStr(resourceSpec)));
-        }
-        if (StrUtil.isNotBlank(image)) {
-            json.set("image", image);
-        }
-        if (capabilities != null && !capabilities.isEmpty()) {
-            json.set("capabilities", capabilities);
-        }
-        return json.isEmpty() ? null : json.toString();
     }
 }

@@ -59,4 +59,16 @@ public class RegisterMcpParam {
 
     /** 是否需要沙箱托管 */
     private Boolean sandboxRequired;
+
+    /** 沙箱ID（sandboxRequired=true 时使用） */
+    private String sandboxId;
+
+    /** 传输协议：sse / http（sandboxRequired=true 时使用） */
+    private String transportType;
+
+    /** 鉴权方式：none / bearer */
+    private String authType;
+
+    /** 参数实际值 JSON（如 {"API_KEY":"sk-xxx"}） */
+    private String paramValues;
 }

@@ -1,16 +1,18 @@
-import { useState } from 'react'
-import { Modal, Form, Input, Button, Tag, Radio, Space, Image, Select, Switch, Table, message } from 'antd'
+import { useState, useEffect } from 'react'
+import { Modal, Form, Input, Button, Tag, Radio, Space, Image, Select, Switch, Table, message, Steps } from 'antd'
 import type { UploadFile } from 'antd'
 import {
-  InfoCircleOutlined, SettingOutlined, FileTextOutlined,
+  InfoCircleOutlined, SettingOutlined, FileTextOutlined, CloudServerOutlined,
   CameraOutlined, PlusOutlined, CheckCircleFilled,
   CodeOutlined, GlobalOutlined, ApiOutlined, DeleteOutlined, EditOutlined,
+  LoadingOutlined,
 } from '@ant-design/icons'
+import { sandboxApi } from '@/lib/api'
 
 interface McpCustomConfigModalProps {
   visible: boolean
   onCancel: () => void
-  onOk: (values: any) => void
+  onOk: (values: any) => void | Promise<void>
 }
 
 interface ExtraParam {
@@ -26,6 +28,7 @@ const NAV_ITEMS = [
   { key: 0, label: '基础信息', icon: <InfoCircleOutlined />, desc: '名称、仓库、标签' },
   { key: 1, label: 'MCP 配置', icon: <SettingOutlined />, desc: '协议与连接方式' },
   { key: 2, label: '服务介绍', icon: <FileTextOutlined />, desc: 'Markdown 文档' },
+  { key: 3, label: '沙箱部署', icon: <CloudServerOutlined />, desc: '沙箱与参数配置' },
 ]
 
 export function McpCustomConfigModal({ visible, onCancel, onOk }: McpCustomConfigModalProps) {
@@ -41,9 +44,28 @@ export function McpCustomConfigModal({ visible, onCancel, onOk }: McpCustomConfi
   const [paramModalVisible, setParamModalVisible] = useState(false)
   const [paramForm] = Form.useForm()
   const [editingParamKey, setEditingParamKey] = useState<string | null>(null)
+  const [adminParamValues, setAdminParamValues] = useState<Record<string, string>>({})
+  const [submitting, setSubmitting] = useState(false)
+  const [deployStep, setDeployStep] = useState(-1) // -1=未开始, 0=保存配置, 1=部署沙箱, 2=获取工具
 
   const protocolType: string = Form.useWatch('protocolType', form) || 'sse'
+  const sandboxRequired: boolean = Form.useWatch('sandboxRequired', form) ?? true
   const watchedTags: string[] = Form.useWatch('tags', form) || []
+  const resourcePreset: string = Form.useWatch('resourcePreset', form) || 'small'
+  const [sandboxList, setSandboxList] = useState<any[]>([])
+  const [sandboxLoading, setSandboxLoading] = useState(false)
+  const [namespaceList, setNamespaceList] = useState<string[]>([])
+  const [namespaceLoading, setNamespaceLoading] = useState(false)
+
+  useEffect(() => {
+    if (visible && sandboxRequired) {
+      setSandboxLoading(true)
+      sandboxApi.getSandboxes({ page: 0, size: 100 }).then((res: any) => {
+        const list = res?.data?.content || res?.data?.records || res?.data || []
+        setSandboxList(Array.isArray(list) ? list : [])
+      }).catch(() => setSandboxList([])).finally(() => setSandboxLoading(false))
+    }
+  }, [visible, sandboxRequired])
 
   const getBase64 = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -88,6 +110,11 @@ export function McpCustomConfigModal({ visible, onCancel, onOk }: McpCustomConfi
     setCompletedSteps(new Set())
     setExtraParams([])
     setEditingParamKey(null)
+    setAdminParamValues({})
+    setSubmitting(false)
+    setDeployStep(-1)
+    setNamespaceList([])
+    setNamespaceLoading(false)
   }
 
   const handleCancel = () => { resetAll(); onCancel() }
@@ -95,7 +122,8 @@ export function McpCustomConfigModal({ visible, onCancel, onOk }: McpCustomConfi
   const stepFields: string[][] = [
     ['mcpServerName', 'mcpDisplayName', 'repoUrl'],
     ['mcpConfigJson'],
-    [],
+    [], // 服务介绍 - 无必填
+    [], // 沙箱部署 - 按钮级别校验
   ]
 
   const navigateTo = async (target: number) => {
@@ -117,17 +145,59 @@ export function McpCustomConfigModal({ visible, onCancel, onOk }: McpCustomConfi
     } catch { /* validation failed */ }
   }
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (withDeploy: boolean) => {
+    // "保存并部署" 需要校验沙箱配置字段
+    if (withDeploy && sandboxRequired) {
+      try {
+        await form.validateFields(['sandboxId', 'namespace'])
+      } catch { return }
+    }
+    const values = form.getFieldsValue(true)
+    // 标记 deployNow 供 onOk 回调判断
+    values.deployNow = withDeploy && sandboxRequired
+    setCompletedSteps((prev) => new Set(prev).add(3))
+    setSubmitting(true)
+    if (values.deployNow) {
+      setDeployStep(0)
+    }
     try {
-      // 先校验当前步骤（第3步）的字段
-      await form.validateFields(stepFields[currentStep])
-      // 用 getFieldsValue(true) 获取所有步骤的字段（包括未渲染的）
-      const values = form.getFieldsValue(true)
-      setCompletedSteps((prev) => new Set(prev).add(2))
-      onOk({ ...values, extraParams })
+      await onOk({ ...values, extraParams, adminParamValues })
+      if (values.deployNow) {
+        setDeployStep(2)
+      }
+      message.success(values.deployNow ? '保存并部署成功' : '配置已保存')
       resetAll()
-    } catch { /* validation failed */ }
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || e?.message || '保存失败'
+      if (values.deployNow) {
+        if (msg.includes('部署沙箱') || msg.includes('创建连接')) setDeployStep(1)
+      }
+      message.error(msg)
+    } finally {
+      setSubmitting(false)
+    }
   }
+
+  const handleSaveOnly = () => {
+    if (!sandboxRequired) {
+      // 不需要沙箱，直接保存
+      handleSubmit(false)
+      return
+    }
+    // 需要沙箱但跳过部署，弹窗提醒
+    Modal.confirm({
+      title: '仅保存配置',
+      content: '沙箱尚未部署，保存后可在 MCP 配置信息页面点击「部署到沙箱」按钮手动部署。',
+      okText: '确认保存',
+      cancelText: '取消',
+      onOk: () => handleSubmit(false),
+    })
+  }
+
+  const DEPLOY_STEPS = [
+    { title: '保存配置' },
+    { title: '部署到沙箱' },
+  ]
 
   // ==================== Step 1: 基础信息 ====================
   const renderBasicInfo = () => (
@@ -324,11 +394,6 @@ export function McpCustomConfigModal({ visible, onCancel, onOk }: McpCustomConfi
           </div>
         </Form.Item>
 
-        {/* 是否需要沙箱托管：stdio 强制开启 */}
-        <Form.Item name="sandboxRequired" label="沙箱托管" valuePropName="checked" initialValue={true}>
-          <Switch checkedChildren="需要" unCheckedChildren="不需要" disabled={protocolType === 'stdio'} />
-        </Form.Item>
-
         {/* MCP 连接配置 JSON */}
         <Form.Item
           name="mcpConfigJson"
@@ -484,7 +549,199 @@ export function McpCustomConfigModal({ visible, onCancel, onOk }: McpCustomConfi
     )
   }
 
-  // ==================== Step 3: 服务介绍 ====================
+  // ==================== Step 3: 沙箱部署 ====================
+
+  const handleSandboxChange = async (sandboxId: string) => {
+    setNamespaceList([])
+    form.setFieldsValue({ namespace: undefined })
+    setNamespaceLoading(true)
+    try {
+      const res: any = await sandboxApi.listNamespaces(sandboxId)
+      const list = res?.data || res || []
+      setNamespaceList(Array.isArray(list) ? list : [])
+    } catch {
+      message.error('获取 Namespace 列表失败')
+      setNamespaceList([])
+    } finally {
+      setNamespaceLoading(false)
+    }
+  }
+
+  const renderSandboxConfig = () => {
+    const isStdio = protocolType === 'stdio'
+    return (
+      <>
+        {/* 沙箱托管开关 */}
+        <div className="flex items-center justify-between py-2.5 px-4 bg-gray-50 rounded-lg mb-4">
+          <div>
+            <div className="text-sm text-gray-700">沙箱托管</div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              {isStdio ? 'Stdio 协议必须通过沙箱运行' : '开启后可将 MCP Server 部署到沙箱集群'}
+            </div>
+          </div>
+          <Form.Item name="sandboxRequired" valuePropName="checked" initialValue={true} className="mb-0">
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" disabled={isStdio} />
+          </Form.Item>
+        </div>
+
+        {sandboxRequired ? (
+          <div className="space-y-4">
+            {/* ── 部署目标 ── */}
+            <div className="rounded-lg border border-gray-200 overflow-hidden">
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+                <span className="text-xs font-medium text-gray-600">部署目标</span>
+              </div>
+              <div className="p-4 space-y-3">
+                <Form.Item
+                  name="sandboxId"
+                  label="沙箱实例"
+                  className="mb-0"
+                >
+                  <Select
+                    placeholder="选择沙箱实例"
+                    loading={sandboxLoading}
+                    onChange={handleSandboxChange}
+                    options={sandboxList.map((s: any) => ({
+                      value: s.sandboxId,
+                      label: `${s.sandboxName}${s.status === 'RUNNING' ? '' : ' (不健康)'}`,
+                      disabled: s.status !== 'RUNNING',
+                    }))}
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="namespace"
+                  label="Namespace"
+                  className="mb-0"
+                  extra={!form.getFieldValue('sandboxId') ? <span className="text-[10px] text-gray-400">请先选择沙箱实例</span> : undefined}
+                >
+                  <Select
+                    placeholder={namespaceLoading ? '加载中...' : '选择 Namespace'}
+                    loading={namespaceLoading}
+                    disabled={!form.getFieldValue('sandboxId')}
+                    showSearch
+                    options={namespaceList.map((ns) => ({ value: ns, label: ns }))}
+                  />
+                </Form.Item>
+                {!isStdio && (
+                  <Form.Item name="transportType" label="传输协议" initialValue="sse" className="mb-0">
+                    <Radio.Group size="small" optionType="button" buttonStyle="solid">
+                      <Radio.Button value="sse">SSE</Radio.Button>
+                      <Radio.Button value="http">Streamable HTTP</Radio.Button>
+                    </Radio.Group>
+                  </Form.Item>
+                )}
+              </div>
+            </div>
+
+            {/* ── 资源规格 ── */}
+            <div className="rounded-lg border border-gray-200 overflow-hidden">
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+                <span className="text-xs font-medium text-gray-600">资源规格</span>
+              </div>
+              <div className="p-4">
+                <Form.Item name="resourcePreset" initialValue="small" className={resourcePreset === 'custom' ? 'mb-3' : 'mb-0'}>
+                  <Radio.Group
+                    className="w-full"
+                    onChange={(e) => {
+                      const presets: Record<string, any> = {
+                        small:  { cpuRequest: '250m', cpuLimit: '500m', memoryRequest: '256Mi', memoryLimit: '512Mi', ephemeralStorage: '1Gi' },
+                        medium: { cpuRequest: '500m', cpuLimit: '1',    memoryRequest: '512Mi', memoryLimit: '1Gi',  ephemeralStorage: '2Gi' },
+                        large:  { cpuRequest: '1',    cpuLimit: '2',    memoryRequest: '1Gi',   memoryLimit: '2Gi',  ephemeralStorage: '4Gi' },
+                      }
+                      const p = presets[e.target.value]
+                      if (p) form.setFieldsValue(p)
+                    }}
+                  >
+                    <div className="grid grid-cols-4 gap-2">
+                      {[
+                        { value: 'small',  label: '小型', desc: '0.5C / 512Mi' },
+                        { value: 'medium', label: '中型', desc: '1C / 1Gi' },
+                        { value: 'large',  label: '大型', desc: '2C / 2Gi' },
+                        { value: 'custom', label: '自定义', desc: '手动配置' },
+                      ].map((item) => (
+                        <Radio.Button
+                          key={item.value}
+                          value={item.value}
+                          className="h-auto text-center flex-1"
+                          style={{ padding: '8px 0', lineHeight: 1.3 }}
+                        >
+                          <div className="text-xs font-medium">{item.label}</div>
+                          <div className="text-[10px] text-gray-400 mt-0.5">{item.desc}</div>
+                        </Radio.Button>
+                      ))}
+                    </div>
+                  </Radio.Group>
+                </Form.Item>
+                {resourcePreset === 'custom' ? (
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2 pt-1 border-t border-gray-100">
+                    <Form.Item name="cpuRequest" label="CPU Request" className="mb-0" initialValue="250m">
+                      <Input size="small" className="font-mono text-xs" />
+                    </Form.Item>
+                    <Form.Item name="cpuLimit" label="CPU Limit" className="mb-0" initialValue="500m">
+                      <Input size="small" className="font-mono text-xs" />
+                    </Form.Item>
+                    <Form.Item name="memoryRequest" label="Memory Request" className="mb-0" initialValue="256Mi">
+                      <Input size="small" className="font-mono text-xs" />
+                    </Form.Item>
+                    <Form.Item name="memoryLimit" label="Memory Limit" className="mb-0" initialValue="512Mi">
+                      <Input size="small" className="font-mono text-xs" />
+                    </Form.Item>
+                    <Form.Item name="ephemeralStorage" label="临时存储" className="mb-0" initialValue="1Gi">
+                      <Input size="small" className="font-mono text-xs" />
+                    </Form.Item>
+                  </div>
+                ) : (
+                  <>
+                    <Form.Item name="cpuRequest" hidden initialValue="250m"><Input /></Form.Item>
+                    <Form.Item name="cpuLimit" hidden initialValue="500m"><Input /></Form.Item>
+                    <Form.Item name="memoryRequest" hidden initialValue="256Mi"><Input /></Form.Item>
+                    <Form.Item name="memoryLimit" hidden initialValue="512Mi"><Input /></Form.Item>
+                    <Form.Item name="ephemeralStorage" hidden initialValue="1Gi"><Input /></Form.Item>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* ── 参数值配置 ── */}
+            {extraParams.length > 0 && (
+              <div className="rounded-lg border border-gray-200 overflow-hidden">
+                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+                  <span className="text-xs font-medium text-gray-600">参数值配置</span>
+                  <span className="text-[10px] text-gray-400 ml-2">部署时注入的环境变量 / 请求参数</span>
+                </div>
+                <div className="p-4 space-y-3">
+                  {extraParams.map((p) => (
+                    <div key={p.key}>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className="text-xs font-mono text-gray-700">{p.name}</span>
+                        {p.required && <span className="text-red-400 text-[10px]">*</span>}
+                        <Tag className="m-0 border-0 bg-gray-100 text-gray-500 text-[10px] leading-tight px-1.5 py-0">{p.position}</Tag>
+                      </div>
+                      {p.description && <div className="text-[10px] text-gray-400 mb-1">{p.description}</div>}
+                      <Input
+                        size="small"
+                        placeholder={p.example || `请输入 ${p.name}`}
+                        value={adminParamValues[p.name] || ''}
+                        onChange={(e) => setAdminParamValues(prev => ({ ...prev, [p.name]: e.target.value }))}
+                        className="font-mono text-xs"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="border border-dashed border-gray-200 rounded-lg py-12 text-center">
+            <CloudServerOutlined className="text-2xl text-gray-300 mb-2" />
+            <div className="text-xs text-gray-400">不需要沙箱托管，用户将自行配置连接方式</div>
+          </div>
+        )}
+      </>
+    )
+  }
+
+  // ==================== Step 4: 服务介绍 ====================
   const renderServiceIntro = () => (
     <>
       <div className="flex items-center justify-between mb-3">
@@ -504,7 +761,7 @@ export function McpCustomConfigModal({ visible, onCancel, onOk }: McpCustomConfi
     </>
   )
 
-  const stepContent = [renderBasicInfo, renderMcpConfig, renderServiceIntro]
+  const stepContent = [renderBasicInfo, renderMcpConfig, renderServiceIntro, renderSandboxConfig]
 
   return (
     <Modal
@@ -583,26 +840,64 @@ export function McpCustomConfigModal({ visible, onCancel, onOk }: McpCustomConfi
 
           {/* 表单内容 */}
           <div className="flex-1 overflow-auto px-6 py-5">
-            <Form form={form} layout="vertical" requiredMark="optional">
+            <Form form={form} layout="vertical" requiredMark={false}>
               {stepContent[currentStep]()}
             </Form>
           </div>
 
           {/* 底部操作栏 */}
-          <div className="flex items-center justify-between px-6 py-3 border-t border-gray-100">
-            <div>
-              {currentStep > 0 ? (
-                <Button onClick={() => setCurrentStep(currentStep - 1)}>上一步</Button>
-              ) : <span />}
+          <div className="border-t border-gray-100">
+            {/* 部署进度条 - 仅在提交沙箱部署时显示 */}
+            {submitting && deployStep >= 0 && (
+              <div className="px-6 pt-3 pb-1">
+                <Steps
+                  size="small"
+                  current={deployStep}
+                  status={!submitting && deployStep >= 0 && deployStep < 2 ? 'error' : 'process'}
+                  items={DEPLOY_STEPS.map((step, idx) => ({
+                    title: <span className="text-xs">{step.title}</span>,
+                    icon: submitting && idx === deployStep ? <LoadingOutlined /> : undefined,
+                  }))}
+                />
+              </div>
+            )}
+            {/* 部署失败提示 */}
+            {!submitting && deployStep >= 0 && deployStep < 2 && (
+              <div className="px-6 pt-3 pb-1">
+                <Steps
+                  size="small"
+                  current={deployStep}
+                  status="error"
+                  items={DEPLOY_STEPS.map((step) => ({
+                    title: <span className="text-xs">{step.title}</span>,
+                  }))}
+                />
+              </div>
+            )}
+            <div className="flex items-center justify-between px-6 py-3">
+              <div>
+                {currentStep > 0 && !submitting ? (
+                  <Button onClick={() => setCurrentStep(currentStep - 1)}>上一步</Button>
+                ) : <span />}
+              </div>
+              <Space>
+                <Button onClick={handleCancel} disabled={submitting}>取消</Button>
+                {currentStep < 3 ? (
+                  <Button type="primary" onClick={handleNext}>下一步</Button>
+                ) : (
+                  <>
+                    {sandboxRequired && (
+                      <Button onClick={handleSaveOnly} disabled={submitting}>
+                        仅保存配置
+                      </Button>
+                    )}
+                    <Button type="primary" onClick={() => handleSubmit(true)} loading={submitting} disabled={submitting}>
+                      {submitting ? '处理中...' : (sandboxRequired ? '保存并部署' : '保存配置')}
+                    </Button>
+                  </>
+                )}
+              </Space>
             </div>
-            <Space>
-              <Button onClick={handleCancel}>取消</Button>
-              {currentStep < 2 ? (
-                <Button type="primary" onClick={handleNext}>下一步</Button>
-              ) : (
-                <Button type="primary" onClick={handleSubmit}>保存配置</Button>
-              )}
-            </Space>
           </div>
         </div>
       </div>

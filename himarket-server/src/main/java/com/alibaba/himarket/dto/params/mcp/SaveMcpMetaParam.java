@@ -85,4 +85,22 @@ public class SaveMcpMetaParam {
 
     /** 是否需要沙箱托管 */
     private Boolean sandboxRequired;
+
+    /** 管理员预部署沙箱ID（sandboxRequired=true 时使用） */
+    private String sandboxId;
+
+    /** 管理员预部署传输协议：sse / http（sandboxRequired=true 时使用） */
+    private String transportType;
+
+    /** 管理员预部署鉴权方式：none / bearer（sandboxRequired=true 时使用） */
+    private String authType;
+
+    /** 管理员预部署时填写的参数实际值 JSON（如 {"API_KEY":"sk-xxx"}） */
+    private String paramValues;
+
+    /** 部署目标 Namespace（AGENT_RUNTIME 沙箱在 MCP 创建时选择） */
+    private String namespace;
+
+    /** 资源规格配置 JSON（CPU/内存等，在 MCP 配置沙箱部署时设置） */
+    private String resourceSpec;
 }

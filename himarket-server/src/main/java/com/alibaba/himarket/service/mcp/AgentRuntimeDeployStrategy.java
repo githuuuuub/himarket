@@ -74,13 +74,15 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
             String apiKey,
             String authType,
             String userParams,
-            String extraParamsDef) {
+            String extraParamsDef,
+            String namespace,
+            String resourceSpec) {
         if (StrUtil.isBlank(sandbox.getKubeConfig())) {
             throw new BusinessException(
                     ErrorCode.INVALID_REQUEST, "沙箱实例未配置 KubeConfig: " + sandbox.getSandboxId());
         }
 
-        String namespace = StrUtil.blankToDefault(sandbox.getNamespace(), "default");
+        String ns = StrUtil.blankToDefault(namespace, "default");
         String resourceName = buildResourceName(mcpName, userId);
         String accessName = "himarket-" + userId;
         boolean isStdio = "stdio".equalsIgnoreCase(transportType);
@@ -153,7 +155,7 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
         // 只放模板里实际用到的占位符
         Map<String, String> vars = new LinkedHashMap<>();
         vars.put("RESOURCE_NAME", resourceName);
-        vars.put("NAMESPACE", namespace);
+        vars.put("NAMESPACE", ns);
         vars.put("CLUSTER_ID", extractClusterId(sandbox.getClusterAttribute()));
         vars.put("SHOW_NAME", resourceName);
         vars.put("PROTOCOL", transportType);
@@ -161,8 +163,8 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
         vars.put("ACCESSES_YAML", buildAccessesYaml(isBearer, accessName));
         vars.put("ENV_YAML", envYaml);
 
-        // 从沙箱 extraConfig 读取资源规格和镜像
-        Map<String, String> resourceVars = extractResourceVars(sandbox.getExtraConfig());
+        // 从 MCP 配置的资源规格读取 CPU/内存等
+        Map<String, String> resourceVars = extractResourceVars(resourceSpec);
         vars.putAll(resourceVars);
 
         // 选择模板
@@ -189,19 +191,19 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
         // 下发 CRD
         KubernetesClient client = K8sClientUtils.getClient(sandbox.getKubeConfig());
         client.genericKubernetesResources(CRD_CONTEXT)
-                .inNamespace(namespace)
+                .inNamespace(ns)
                 .resource(crd)
                 .createOrReplace();
 
         log.info(
                 "[AgentRuntimeDeploy] CRD 下发成功: namespace={}, name={}, template={}",
-                namespace,
+                ns,
                 resourceName,
                 templateFile);
 
         // 轮询 Endpoint CRD 获取真实 endpoint URL
         String endpointName = resourceName + "-primary";
-        String endpointUrl = pollEndpointUrl(client, namespace, endpointName);
+        String endpointUrl = pollEndpointUrl(client, ns, endpointName);
 
         // TODO: 临时将 https 替换为 http，绕过 SSL 证书验证问题，后续配置证书后改回
         if (endpointUrl != null && endpointUrl.startsWith("https://")) {
@@ -213,13 +215,13 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
     }
 
     @Override
-    public void undeploy(SandboxInstance sandbox, String mcpName, String userId) {
+    public void undeploy(SandboxInstance sandbox, String mcpName, String userId, String namespace) {
         if (StrUtil.isBlank(sandbox.getKubeConfig())) {
             throw new BusinessException(
                     ErrorCode.INVALID_REQUEST, "沙箱实例未配置 KubeConfig: " + sandbox.getSandboxId());
         }
 
-        String namespace = StrUtil.blankToDefault(sandbox.getNamespace(), "default");
+        String ns = StrUtil.blankToDefault(namespace, "default");
         String resourceName = buildResourceName(mcpName, userId);
         String endpointName = resourceName + "-primary";
 
@@ -228,25 +230,25 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
         // 删除 ToolServer CRD
         try {
             client.genericKubernetesResources(CRD_CONTEXT)
-                    .inNamespace(namespace)
+                    .inNamespace(ns)
                     .withName(resourceName)
                     .delete();
             log.info(
                     "[AgentRuntimeDeploy] ToolServer CRD 删除成功: namespace={}, name={}",
-                    namespace,
+                    ns,
                     resourceName);
         } catch (Exception e) {
             log.warn(
                     "[AgentRuntimeDeploy] ToolServer CRD 删除失败（可能已不存在）: namespace={}, name={},"
                             + " error={}",
-                    namespace,
+                    ns,
                     resourceName,
                     e.getMessage());
             return;
         }
 
         // 轮询等待 Endpoint CRD 被沙箱清理
-        waitEndpointDeleted(client, namespace, endpointName);
+        waitEndpointDeleted(client, ns, endpointName);
     }
 
     /**
@@ -532,40 +534,30 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
     }
 
     /**
-     * 从沙箱 extraConfig 中提取资源规格和镜像，用于 CRD 模板占位符替换。
-     * 如果缺少必要配置则抛出异常。
+     * 从资源规格 JSON 中提取 CPU/内存等配置，用于 CRD 模板占位符替换。
+     * 未配置的字段使用默认值。
      */
     @SuppressWarnings("unchecked")
-    private Map<String, String> extractResourceVars(String extraConfig) {
-        if (StrUtil.isBlank(extraConfig)) {
-            throw new BusinessException(ErrorCode.INVALID_REQUEST, "沙箱未配置资源规格和镜像，请先在沙箱管理中完善配置");
+    private Map<String, String> extractResourceVars(String resourceSpecJson) {
+        if (StrUtil.isBlank(resourceSpecJson)) {
+            throw new BusinessException(
+                    ErrorCode.INVALID_REQUEST, "未配置资源规格，请在 MCP 沙箱部署配置中设置 CPU/内存等资源");
         }
 
-        Map<String, Object> config;
+        Map<String, Object> spec;
         try {
-            config = OBJECT_MAPPER.readValue(extraConfig, Map.class);
+            spec = OBJECT_MAPPER.readValue(resourceSpecJson, Map.class);
         } catch (Exception e) {
             throw new BusinessException(
-                    ErrorCode.INVALID_REQUEST, "沙箱 extraConfig 格式异常: " + e.getMessage());
+                    ErrorCode.INVALID_REQUEST, "资源规格 JSON 格式异常: " + e.getMessage());
         }
 
-        String image = config.get("image") != null ? config.get("image").toString().trim() : "";
-        if (StrUtil.isBlank(image)) {
-            throw new BusinessException(ErrorCode.INVALID_REQUEST, "沙箱未配置容器镜像，请先在沙箱管理中设置镜像");
-        }
-
-        Object specObj = config.get("resourceSpec");
-        if (!(specObj instanceof Map)) {
-            throw new BusinessException(
-                    ErrorCode.INVALID_REQUEST, "沙箱未配置资源规格，请先在沙箱管理中设置 CPU/内存等资源");
-        }
-
-        Map<String, Object> spec = (Map<String, Object>) specObj;
-        String cpuRequest = requireField(spec, "cpuRequest", "CPU Request");
-        String cpuLimit = requireField(spec, "cpuLimit", "CPU Limit");
-        String memoryRequest = requireField(spec, "memoryRequest", "Memory Request");
-        String memoryLimit = requireField(spec, "memoryLimit", "Memory Limit");
-        String ephemeralStorage = requireField(spec, "ephemeralStorage", "临时存储空间");
+        String cpuRequest = getOrDefault(spec, "cpuRequest", "250m");
+        String cpuLimit = getOrDefault(spec, "cpuLimit", "1");
+        String memoryRequest = getOrDefault(spec, "memoryRequest", "256Mi");
+        String memoryLimit = getOrDefault(spec, "memoryLimit", "512Mi");
+        String ephemeralStorage = getOrDefault(spec, "ephemeralStorage", "1Gi");
+        String image = getOrDefault(spec, "image", "");
 
         Map<String, String> vars = new LinkedHashMap<>();
         vars.put("CPU_REQUEST", cpuRequest);
@@ -573,17 +565,10 @@ public class AgentRuntimeDeployStrategy implements McpSandboxDeployStrategy {
         vars.put("MEMORY_REQUEST", memoryRequest);
         vars.put("MEMORY_LIMIT", memoryLimit);
         vars.put("EPHEMERAL_STORAGE", ephemeralStorage);
-        vars.put("IMAGE", image);
-        return vars;
-    }
-
-    private String requireField(Map<String, Object> spec, String key, String label) {
-        Object val = spec.get(key);
-        if (val == null || StrUtil.isBlank(val.toString())) {
-            throw new BusinessException(
-                    ErrorCode.INVALID_REQUEST, "沙箱资源规格缺少 " + label + "，请先在沙箱管理中完善配置");
+        if (StrUtil.isNotBlank(image)) {
+            vars.put("IMAGE", image);
         }
-        return val.toString();
+        return vars;
     }
 
     private String getOrDefault(Map<String, Object> map, String key, String defaultValue) {

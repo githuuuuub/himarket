@@ -75,4 +75,9 @@ public interface SandboxService {
      * 手动触发单个沙箱实例的健康检查，返回更新后的状态
      */
     SandboxResult healthCheck(String sandboxId);
+
+    /**
+     * 获取指定沙箱集群的 Namespace 列表
+     */
+    List<String> listNamespaces(String sandboxId);
 }

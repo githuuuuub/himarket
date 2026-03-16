@@ -14,7 +14,6 @@ import com.alibaba.himarket.dto.result.common.PageResult;
 import com.alibaba.himarket.dto.result.consumer.ConsumerCredentialResult;
 import com.alibaba.himarket.dto.result.consumer.ConsumerResult;
 import com.alibaba.himarket.dto.result.consumer.CredentialContext;
-import com.alibaba.himarket.dto.result.mcp.MyEndpointResult;
 import com.alibaba.himarket.dto.result.model.ModelConfigResult;
 import com.alibaba.himarket.dto.result.product.ProductResult;
 import com.alibaba.himarket.dto.result.product.SubscriptionResult;
@@ -130,46 +129,57 @@ public class CliProviderController {
     @GetMapping("/market-mcps")
     @DeveloperAuth
     public MarketMcpsResponse listMarketMcps() {
-        String userId = contextHolder.getUser();
 
-        // 从 endpoint 热数据表获取用户订阅的所有 MCP（包括沙箱部署的）
-        List<MyEndpointResult> myEndpoints = mcpServerService.listMyEndpoints();
-
-        List<MarketMcpInfo> mcpServers = new ArrayList<>();
-        List<String> productIds = new ArrayList<>();
-
-        for (MyEndpointResult ep : myEndpoints) {
-            if (!"ACTIVE".equalsIgnoreCase(ep.getStatus())) {
-                continue;
-            }
-            if (cn.hutool.core.util.StrUtil.isBlank(ep.getEndpointUrl())) {
-                continue;
-            }
-
-            String protocol =
-                    cn.hutool.core.util.StrUtil.blankToDefault(
-                            ep.getProtocol(), ep.getProtocolType());
-            String transportType =
-                    ("HTTP".equalsIgnoreCase(protocol)
-                                    || "StreamableHTTP".equalsIgnoreCase(protocol))
-                            ? "streamable-http"
-                            : "sse";
-
-            mcpServers.add(
-                    MarketMcpInfo.builder()
-                            .productId(ep.getProductId())
-                            .name(ep.getMcpName())
-                            .url(ep.getEndpointUrl())
-                            .transportType(transportType)
-                            .description(ep.getDescription())
-                            .build());
-
-            if (ep.getProductId() != null) {
-                productIds.add(ep.getProductId());
-            }
+        // 1. 获取 Primary Consumer
+        ConsumerResult consumer;
+        try {
+            consumer = consumerService.getPrimaryConsumer();
+        } catch (Exception e) {
+            logger.debug("No primary consumer found for current developer: {}", e.getMessage());
+            return MarketMcpsResponse.builder()
+                    .mcpServers(Collections.emptyList())
+                    .authHeaders(null)
+                    .build();
         }
 
-        // 获取认证头
+        String consumerId = consumer.getConsumerId();
+
+        // 2. 从 product_subscription 获取 APPROVED 订阅
+        List<SubscriptionResult> subscriptions =
+                consumerService.listConsumerSubscriptions(consumerId);
+        List<String> subscribedProductIds =
+                subscriptions.stream()
+                        .filter(s -> SubscriptionStatus.APPROVED.name().equals(s.getStatus()))
+                        .map(SubscriptionResult::getProductId)
+                        .collect(Collectors.toList());
+
+        if (subscribedProductIds.isEmpty()) {
+            return MarketMcpsResponse.builder()
+                    .mcpServers(Collections.emptyList())
+                    .authHeaders(extractAuthHeaders())
+                    .build();
+        }
+
+        // 3. 批量获取产品详情，仅保留 MCP_SERVER 类型
+        Map<String, ProductResult> productMap = productService.getProducts(subscribedProductIds);
+
+        List<MarketMcpInfo> mcpServers = new ArrayList<>();
+        for (String pid : subscribedProductIds) {
+            ProductResult p = productMap.get(pid);
+            if (p == null || p.getType() != ProductType.MCP_SERVER) {
+                continue;
+            }
+            String mcpName =
+                    (p.getMcpConfig() != null) ? p.getMcpConfig().getMcpServerName() : p.getName();
+            mcpServers.add(
+                    MarketMcpInfo.builder()
+                            .productId(p.getProductId())
+                            .name(mcpName)
+                            .description(p.getDescription())
+                            .build());
+        }
+
+        // 4. 获取认证头
         Map<String, String> authHeaders = extractAuthHeaders();
 
         return MarketMcpsResponse.builder().mcpServers(mcpServers).authHeaders(authHeaders).build();

@@ -1,15 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  SearchOutlined, ToolOutlined, AppstoreOutlined, CopyOutlined,
-  CloudServerOutlined, LinkOutlined, DeleteOutlined, StarOutlined, PlusOutlined,
+  SearchOutlined, ToolOutlined, AppstoreOutlined,
+  CloudServerOutlined, StarOutlined, PlusOutlined,
 } from "@ant-design/icons";
-import { Input, Spin, message, Button, Badge, Popconfirm } from "antd";
+import { Input, Spin, message, Button } from "antd";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "../components/Layout";
 import { CategoryMenu } from "../components/square/CategoryMenu";
 import APIs, { type ICategory } from "../lib/apis";
 import { getIconString } from "../lib/iconUtils";
-import type { IProductDetail, IMcpMeta, IMyEndpoint } from "../lib/apis/product";
+import type { IProductDetail, IMcpMeta } from "../lib/apis/product";
 import { ProductIconRenderer } from "../components/icon/ProductIconRenderer";
 import dayjs from "dayjs";
 import BackToTopButton from "../components/scroll-to-top";
@@ -34,8 +34,9 @@ function McpSquare() {
   const [loadingMore, setLoadingMore] = useState(false);
   const PAGE_SIZE = 30;
 
-  const [myEndpoints, setMyEndpoints] = useState<IMyEndpoint[]>([]);
+  const [myMcpItems, setMyMcpItems] = useState<McpProductItem[]>([]);
   const [myMcpsLoading, setMyMcpsLoading] = useState(false);
+  const [subscribedProductIds, setSubscribedProductIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const fetchCategories = async () => {
@@ -96,26 +97,65 @@ function McpSquare() {
     fetchProducts();
   }, [activeCategory, activeTab]);
 
-  const fetchMyEndpoints = useCallback(async () => {
+  // 获取我的 MCP（基于 product_subscription）
+  const fetchMyMcps = useCallback(async () => {
     setMyMcpsLoading(true);
     try {
-      const response = await APIs.getMyEndpoints();
-      if (response.code === "SUCCESS" && response.data) setMyEndpoints(response.data);
-    } catch (error) {
-      console.error("Failed to fetch my endpoints:", error);
+      const consumerRes = await APIs.getPrimaryConsumer();
+      if (consumerRes.code !== "SUCCESS" || !consumerRes.data) return;
+      const subRes = await APIs.getConsumerSubscriptions(consumerRes.data.consumerId, { size: 200 });
+      if (subRes.code !== "SUCCESS" || !subRes.data?.content) return;
+      const subs = subRes.data.content;
+      const productIds = new Set(subs.map(s => s.productId));
+      setSubscribedProductIds(productIds);
+      // 获取产品详情 + meta
+      const items = await fetchMetaForProducts(
+        subs.map(s => ({ productId: s.productId, name: s.productName } as IProductDetail))
+      );
+      // 补充完整产品信息
+      const fullItems = await Promise.all(
+        items.map(async (item) => {
+          try {
+            const prodRes = await APIs.getProduct({ id: item.product.productId });
+            if (prodRes.code === "SUCCESS" && prodRes.data) {
+              return { ...item, product: prodRes.data };
+            }
+          } catch { /* ignore */ }
+          return item;
+        })
+      );
+      setMyMcpItems(fullItems.filter(item => item.product.type === "MCP_SERVER"));
+    } catch {
+      // 未登录或获取失败
     } finally {
       setMyMcpsLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    if (activeTab === "my") fetchMyEndpoints();
-  }, [activeTab, fetchMyEndpoints]);
+  // 获取订阅状态（基于 product_subscription）
+  const fetchSubscribedProducts = useCallback(async () => {
+    try {
+      const consumerRes = await APIs.getPrimaryConsumer();
+      if (consumerRes.code === "SUCCESS" && consumerRes.data) {
+        const subRes = await APIs.getConsumerSubscriptions(consumerRes.data.consumerId, { size: 200 });
+        if (subRes.code === "SUCCESS" && subRes.data?.content) {
+          setSubscribedProductIds(new Set(subRes.data.content.map(s => s.productId)));
+        }
+      }
+    } catch {
+      // 未登录或获取失败不影响页面
+    }
+  }, []);
 
-  // 广场 tab 也需要加载订阅状态
+  // 页面初始化时获取订阅状态（用于广场"已订阅"标记）+ 我的MCP数据（用于数量显示）
   useEffect(() => {
-    if (activeTab === "market") fetchMyEndpoints();
-  }, [activeTab]);
+    fetchSubscribedProducts();
+    fetchMyMcps();
+  }, [fetchSubscribedProducts, fetchMyMcps]);
+
+  useEffect(() => {
+    if (activeTab === "my") fetchMyMcps();
+  }, [activeTab, fetchMyMcps]);
 
   const loadMoreProducts = useCallback(async () => {
     if (loadingMore || !hasMore) return;
@@ -155,24 +195,37 @@ function McpSquare() {
     return name.toLowerCase().includes(q) || desc?.toLowerCase().includes(q);
   });
 
-  const handleCopyEndpoint = (endpoint: string) => {
-    navigator.clipboard.writeText(endpoint);
-    message.success("已复制 MCP 链接");
-  };
-
-  const handleDisconnect = async (endpointId: string) => {
+  const handleSubscribe = async (productId: string) => {
     try {
-      const response = await APIs.unsubscribeMcp(endpointId);
-      if (response.code === "SUCCESS") {
-        message.success("已取消订阅");
-        fetchMyEndpoints();
+      const consumerRes = await APIs.getPrimaryConsumer();
+      if (consumerRes.code !== "SUCCESS" || !consumerRes.data) {
+        message.error("获取消费者信息失败");
+        return;
       }
+      await APIs.subscribeProduct(consumerRes.data.consumerId, productId);
+      message.success("订阅成功");
+      fetchSubscribedProducts();
+      fetchMyMcps();
     } catch (error: any) {
-      message.error(error?.message || "取消订阅失败");
+      message.error(error?.response?.data?.message || error?.message || "订阅失败");
     }
   };
 
-  const subscribedProductIds = new Set(myEndpoints.map((e) => e.productId));
+  const handleUnsubscribe = async (productId: string) => {
+    try {
+      const consumerRes = await APIs.getPrimaryConsumer();
+      if (consumerRes.code !== "SUCCESS" || !consumerRes.data) {
+        message.error("获取消费者信息失败");
+        return;
+      }
+      await APIs.unsubscribeProduct(consumerRes.data.consumerId, productId);
+      message.success("已取消订阅");
+      fetchSubscribedProducts();
+      fetchMyMcps();
+    } catch (error: any) {
+      message.error(error?.response?.data?.message || error?.message || "取消订阅失败");
+    }
+  };
 
   return (
     <Layout>
@@ -199,7 +252,7 @@ function McpSquare() {
                     : "text-gray-500 hover:text-gray-700"
                 }`}
               >
-                <AppstoreOutlined className="mr-1.5" />广场
+                <AppstoreOutlined className="mr-1.5" />MCP 广场
               </button>
               <button
                 onClick={() => setActiveTab("my")}
@@ -209,9 +262,11 @@ function McpSquare() {
                     : "text-gray-500 hover:text-gray-700"
                 }`}
               >
-                <StarOutlined className="mr-0.5" />我的
-                {myEndpoints.length > 0 && (
-                  <Badge count={myEndpoints.length} size="small" />
+                <StarOutlined className="mr-0.5" />我的 MCP
+                {myMcpItems.length > 0 && (
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-colorPrimary/10 text-colorPrimary">
+                    {myMcpItems.length}
+                  </span>
                 )}
               </button>
             </div>
@@ -249,13 +304,14 @@ function McpSquare() {
                   items={filteredItems}
                   subscribedProductIds={subscribedProductIds}
                   onViewDetail={(pid) => navigate(`/mcp/${pid}`)}
+                  onSubscribe={handleSubscribe}
+                  onUnsubscribe={handleUnsubscribe}
                 />
               ) : (
                 <MyMcpContent
-                  endpoints={myEndpoints}
+                  items={myMcpItems}
                   loading={myMcpsLoading}
-                  onDisconnect={handleDisconnect}
-                  onCopy={handleCopyEndpoint}
+                  onDisconnect={handleUnsubscribe}
                   onViewDetail={(pid) => navigate(`/mcp/${pid}`)}
                 />
               )}
@@ -269,12 +325,14 @@ function McpSquare() {
 }
 
 /* ==================== 广场内容 ==================== */
-function MarketContent({ loading, loadingMore, items, subscribedProductIds, onViewDetail }: {
+function MarketContent({ loading, loadingMore, items, subscribedProductIds, onViewDetail, onSubscribe, onUnsubscribe }: {
   loading: boolean;
   loadingMore: boolean;
   items: McpProductItem[];
   subscribedProductIds: Set<string>;
   onViewDetail: (productId: string) => void;
+  onSubscribe: (productId: string) => Promise<void>;
+  onUnsubscribe: (productId: string) => Promise<void>;
 }) {
   if (loading) {
     return <div className="flex items-center justify-center h-full"><Spin size="large" tip="加载中..." /></div>;
@@ -293,6 +351,8 @@ function MarketContent({ loading, loadingMore, items, subscribedProductIds, onVi
             item={item}
             subscribed={subscribedProductIds.has(item.product.productId)}
             onViewDetail={() => onViewDetail(item.product.productId)}
+            onSubscribe={() => onSubscribe(item.product.productId)}
+            onUnsubscribe={() => onUnsubscribe(item.product.productId)}
           />
         ))}
       </div>
@@ -304,21 +364,47 @@ function MarketContent({ loading, loadingMore, items, subscribedProductIds, onVi
 }
 
 /* ==================== MCP 卡片（匹配 ModelCard 风格） ==================== */
-function McpCard({ item, subscribed, onViewDetail }: {
+function McpCard({ item, subscribed, onViewDetail, onSubscribe, onUnsubscribe }: {
   item: McpProductItem;
   subscribed: boolean;
   onViewDetail: () => void;
+  onSubscribe: () => Promise<void>;
+  onUnsubscribe: () => Promise<void>;
 }) {
   const { product, meta } = item;
   const displayName = meta?.displayName || meta?.mcpName || product.name;
   const description = meta?.description || product.description;
-  const protocolType = meta?.protocolType;
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // 收集所有可用的连接类型（去重、统一大写）
+  const allProtocols = (() => {
+    const set = new Set<string>();
+    // 1. meta.protocolType（MCP 元信息上的协议）
+    if (meta?.protocolType) {
+      meta.protocolType.split(",").map(p => p.trim().toUpperCase()).filter(Boolean).forEach(p => set.add(p));
+    }
+    // 2. 冷数据：product.mcpConfig.meta.protocol
+    const coldProto = product.mcpConfig?.meta?.protocol;
+    if (coldProto) {
+      coldProto.split(",").map((p: string) => p.trim().toUpperCase()).filter(Boolean).forEach((p: string) => set.add(p));
+    }
+    // 3. 热数据：endpoint 协议
+    if (meta?.endpointProtocol) {
+      meta.endpointProtocol.split(",").map(p => p.trim().toUpperCase()).filter(Boolean).forEach(p => set.add(p));
+    }
+    // 4. rawConfig 存在说明支持 Stdio
+    if (product.mcpConfig?.mcpServerConfig?.rawConfig && Object.keys(product.mcpConfig.mcpServerConfig.rawConfig).length > 0) {
+      set.add("STDIO");
+    }
+    return Array.from(set);
+  })();
 
   const toolCount = (() => {
     const src = meta?.toolsConfig || product.mcpConfig?.tools;
     if (!src) return 0;
     try {
       const parsed = typeof src === "string" ? JSON.parse(src) : src;
+      if (Array.isArray(parsed)) return parsed.length;
       return parsed?.tools?.length || 0;
     } catch { return 0; }
   })();
@@ -332,6 +418,18 @@ function McpCard({ item, subscribed, onViewDetail }: {
       return meta.tags.split(",").map((t: string) => t.trim()).filter(Boolean);
     }
   })();
+
+  const handleSubscribeClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setActionLoading(true);
+    try { await onSubscribe(); } finally { setActionLoading(false); }
+  };
+
+  const handleUnsubscribeClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setActionLoading(true);
+    try { await onUnsubscribe(); } finally { setActionLoading(false); }
+  };
 
   return (
     <div
@@ -369,12 +467,12 @@ function McpCard({ item, subscribed, onViewDetail }: {
           {meta?.mcpName && (
             <div className="text-[10px] text-gray-400 font-mono truncate mt-0.5">{meta.mcpName}</div>
           )}
-          <div className="flex items-center gap-1.5 mt-1">
-            {protocolType && (
-              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-colorPrimary/10 text-colorPrimary">
-                {protocolType.toUpperCase()}
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            {allProtocols.map(p => (
+              <span key={p} className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-colorPrimary/10 text-colorPrimary">
+                {p}
               </span>
-            )}
+            ))}
             {toolCount > 0 && (
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-colorPrimary/5 text-colorPrimary/80">
                 <ToolOutlined className="mr-0.5" />{toolCount}
@@ -423,17 +521,19 @@ function McpCard({ item, subscribed, onViewDetail }: {
           </button>
           {subscribed ? (
             <button
-              onClick={(e) => { e.stopPropagation(); onViewDetail(); }}
-              className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-red-600 bg-white border border-red-300 hover:bg-red-50 hover:border-red-400 transition-all duration-200 shadow-sm"
+              disabled={actionLoading}
+              onClick={handleUnsubscribeClick}
+              className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-red-600 bg-white border border-red-300 hover:bg-red-50 hover:border-red-400 transition-all duration-200 shadow-sm disabled:opacity-50"
             >
-              取消订阅
+              {actionLoading ? "处理中..." : "取消订阅"}
             </button>
           ) : (
             <button
-              onClick={(e) => { e.stopPropagation(); onViewDetail(); }}
-              className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-colorPrimary hover:opacity-90 transition-all duration-200 shadow-sm"
+              disabled={actionLoading}
+              onClick={handleSubscribeClick}
+              className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-colorPrimary hover:opacity-90 transition-all duration-200 shadow-sm disabled:opacity-50"
             >
-              立即订阅
+              {actionLoading ? "处理中..." : "立即订阅"}
             </button>
           )}
         </div>
@@ -443,38 +543,36 @@ function McpCard({ item, subscribed, onViewDetail }: {
 }
 
 /* ==================== 我的 MCP 内容 ==================== */
-function MyMcpContent({ endpoints, loading, onDisconnect, onCopy, onViewDetail }: {
-  endpoints: IMyEndpoint[];
+function MyMcpContent({ items, loading, onDisconnect, onViewDetail }: {
+  items: McpProductItem[];
   loading: boolean;
-  onDisconnect: (id: string) => void;
-  onCopy: (url: string) => void;
+  onDisconnect: (productId: string) => void;
   onViewDetail: (productId: string) => void;
 }) {
   if (loading) {
     return <div className="flex items-center justify-center h-full"><Spin size="large" tip="加载中..." /></div>;
   }
 
-  if (endpoints.length === 0) {
+  if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-gray-400">
         <CloudServerOutlined className="text-5xl mb-4 text-gray-300" />
         <span className="text-sm">暂无已订阅的 MCP</span>
-        <span className="text-xs mt-1 text-gray-300">去广场浏览并订阅 MCP Server</span>
+        <span className="text-xs mt-1 text-gray-300">去 MCP 广场浏览并订阅</span>
       </div>
     );
   }
 
   return (
     <>
-      <div className="text-xs text-gray-400 mb-3">共 {endpoints.length} 个已订阅</div>
+      <div className="text-xs text-gray-400 mb-3">共 {items.length} 个已订阅</div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {endpoints.map((ep) => (
-          <MyEndpointCard
-            key={ep.endpointId}
-            endpoint={ep}
-            onDisconnect={() => onDisconnect(ep.endpointId)}
-            onCopy={() => onCopy(ep.endpointUrl)}
-            onViewDetail={() => ep.productId && onViewDetail(ep.productId)}
+        {items.map((item) => (
+          <MyMcpCard
+            key={item.product.productId}
+            item={item}
+            onDisconnect={() => onDisconnect(item.product.productId)}
+            onViewDetail={() => onViewDetail(item.product.productId)}
           />
         ))}
       </div>
@@ -482,20 +580,44 @@ function MyMcpContent({ endpoints, loading, onDisconnect, onCopy, onViewDetail }
   );
 }
 
-/* ==================== 我的 MCP 卡片（匹配整体风格） ==================== */
-function MyEndpointCard({ endpoint, onDisconnect, onCopy, onViewDetail }: {
-  endpoint: IMyEndpoint;
+/* ==================== 我的 MCP 卡片 ==================== */
+function MyMcpCard({ item, onDisconnect, onViewDetail }: {
+  item: McpProductItem;
   onDisconnect: () => void;
-  onCopy: () => void;
   onViewDetail: () => void;
 }) {
-  const hostingLabel: Record<string, { text: string; color: string }> = {
-    SANDBOX: { text: "沙箱", color: "bg-colorPrimary/10 text-colorPrimary" },
-    DIRECT: { text: "直连", color: "bg-green-50 text-green-600" },
-    GATEWAY: { text: "网关", color: "bg-blue-50 text-blue-600" },
-    NACOS: { text: "Nacos", color: "bg-cyan-50 text-cyan-600" },
-  };
-  const hosting = hostingLabel[endpoint.hostingType] || { text: endpoint.hostingType, color: "bg-gray-50 text-gray-600" };
+  const { product, meta } = item;
+  const displayName = meta?.displayName || meta?.mcpName || product.name;
+  const description = meta?.description || product.description;
+
+  // 收集所有可用的连接类型（去重、统一大写）
+  const allProtocols = (() => {
+    const set = new Set<string>();
+    if (meta?.protocolType) {
+      meta.protocolType.split(",").map(p => p.trim().toUpperCase()).filter(Boolean).forEach(p => set.add(p));
+    }
+    const coldProto = product.mcpConfig?.meta?.protocol;
+    if (coldProto) {
+      coldProto.split(",").map((p: string) => p.trim().toUpperCase()).filter(Boolean).forEach((p: string) => set.add(p));
+    }
+    if (meta?.endpointProtocol) {
+      meta.endpointProtocol.split(",").map(p => p.trim().toUpperCase()).filter(Boolean).forEach(p => set.add(p));
+    }
+    if (product.mcpConfig?.mcpServerConfig?.rawConfig && Object.keys(product.mcpConfig.mcpServerConfig.rawConfig).length > 0) {
+      set.add("STDIO");
+    }
+    return Array.from(set);
+  })();
+
+  const toolCount = (() => {
+    const src = meta?.toolsConfig || product.mcpConfig?.tools;
+    if (!src) return 0;
+    try {
+      const parsed = typeof src === "string" ? JSON.parse(src) : src;
+      if (Array.isArray(parsed)) return parsed.length;
+      return parsed?.tools?.length || 0;
+    } catch { return 0; }
+  })();
 
   return (
     <div
@@ -507,61 +629,75 @@ function MyEndpointCard({ endpoint, onDisconnect, onCopy, onViewDetail }: {
         transition-all duration-300 ease-in-out
         hover:bg-white hover:shadow-md hover:scale-[1.02] hover:border-colorPrimary/30
         active:scale-[0.98]
+        relative overflow-hidden group
+        h-[200px] flex flex-col
       "
     >
-      <div className="flex items-start gap-3 mb-3">
+      {/* 头部：icon + 名称 + 标签 */}
+      <div className="flex items-center gap-3 mb-3">
         <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-colorPrimary/10 to-colorPrimary/5 flex items-center justify-center flex-shrink-0 overflow-hidden">
-          {endpoint.icon ? (
-            <ProductIconRenderer className="w-full h-full object-cover" iconType={getIconString({ type: "URL", value: endpoint.icon })} />
+          {meta?.icon || product.icon ? (
+            <ProductIconRenderer className="w-full h-full object-cover" iconType={getIconString(meta?.icon ? { type: "URL", value: meta.icon } : product.icon)} />
           ) : (
-            <CloudServerOutlined className="text-colorPrimary text-lg" />
+            <AppstoreOutlined className="text-colorPrimary text-lg" />
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="text-base font-semibold text-gray-900 truncate">{endpoint.displayName || endpoint.mcpName}</h3>
-          <div className="flex items-center gap-1.5 mt-1">
-            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${hosting.color}`}>{hosting.text}</span>
-            {endpoint.protocol && (
-              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-colorPrimary/10 text-colorPrimary">
-                {endpoint.protocol.toUpperCase()}
+          <h3 className="text-base font-semibold text-gray-900 truncate">{displayName}</h3>
+          {meta?.mcpName && (
+            <div className="text-[10px] text-gray-400 font-mono truncate mt-0.5">{meta.mcpName}</div>
+          )}
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            {allProtocols.map(p => (
+              <span key={p} className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-colorPrimary/10 text-colorPrimary">
+                {p}
+              </span>
+            ))}
+            {toolCount > 0 && (
+              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-colorPrimary/5 text-colorPrimary/80">
+                <ToolOutlined className="mr-0.5" />{toolCount}
               </span>
             )}
-            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-              endpoint.status === "ACTIVE" ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600"
-            }`}>
-              {endpoint.status === "ACTIVE" ? "运行中" : endpoint.status}
-            </span>
           </div>
-        </div>
-        <div onClick={(e) => e.stopPropagation()}>
-          <Popconfirm title="确认取消订阅？" onConfirm={onDisconnect} okText="确认" cancelText="取消">
-            <Button type="text" size="small" icon={<DeleteOutlined />} className="text-gray-300 hover:text-red-500" />
-          </Popconfirm>
         </div>
       </div>
 
-      <p className="text-sm text-[#a3a3a3] line-clamp-2 mb-3">{endpoint.description || "暂无描述"}</p>
+      {/* 描述 */}
+      <p className="max-h-12 text-sm mb-4 line-clamp-2 leading-relaxed flex-1 text-[#a3a3a3]">
+        {description || "暂无描述"}
+      </p>
 
-      {endpoint.endpointUrl && (
-        <div
-          className="bg-gray-50/80 rounded-xl px-3 py-2 flex items-center gap-2 group/url"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <LinkOutlined className="text-gray-300 text-xs flex-shrink-0" />
-          <span className="text-[11px] text-gray-500 truncate flex-1 font-mono">{endpoint.endpointUrl}</span>
-          <Button
-            type="text" size="small" icon={<CopyOutlined />}
-            onClick={onCopy}
-            className="flex-shrink-0 text-gray-300 group-hover/url:text-colorPrimary"
-          />
-        </div>
-      )}
+      {/* 底部 - hover 时淡出 */}
+      <div className="h-10 flex items-center justify-between text-xs transition-opacity duration-300 group-hover:opacity-0">
+        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-100">
+          已订阅
+        </span>
+        <span className="flex-shrink-0 text-[#a3a3a3]">{dayjs(product.createAt).format("YYYY-MM-DD")}</span>
+      </div>
 
-      {endpoint.endpointCreatedAt && (
-        <div className="text-[10px] text-[#a3a3a3] mt-2.5">
-          订阅于 {dayjs(endpoint.endpointCreatedAt).format("YYYY-MM-DD HH:mm")}
+      {/* Hover 操作按钮 */}
+      <div className="
+        absolute bottom-0 left-0 right-0 p-5
+        opacity-0 translate-y-2
+        group-hover:opacity-100 group-hover:translate-y-0
+        transition-all duration-300 ease-out
+        pointer-events-none group-hover:pointer-events-auto
+      ">
+        <div className="flex gap-3">
+          <button
+            onClick={(e) => { e.stopPropagation(); onViewDetail(); }}
+            className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 shadow-sm"
+          >
+            查看详情
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDisconnect(); }}
+            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-red-600 bg-white border border-red-300 hover:bg-red-50 hover:border-red-400 transition-all duration-200 shadow-sm"
+          >
+            取消订阅
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }

@@ -338,8 +338,14 @@ export const mcpServerApi = {
     publishStatus?: string
     toolsConfig?: string
     sandboxRequired?: boolean
+    sandboxId?: string
+    transportType?: string
+    authType?: string
+    paramValues?: string
+    namespace?: string
+    resourceSpec?: string
   }) => {
-    return api.post(`/mcp-servers/meta`, data)
+    return api.post(`/mcp-servers/meta`, data, { timeout: 120000 })
   },
   // 获取 MCP 元信息
   getMeta: (mcpServerId: string) => {
@@ -381,6 +387,25 @@ export const mcpServerApi = {
   listPublished: (params?: { page?: number; size?: number }) => {
     return api.get(`/mcp-servers/published`, { params })
   },
+  // 刷新工具列表
+  refreshTools: (mcpServerId: string) => {
+    return api.post(`/mcp-servers/meta/${mcpServerId}/refresh-tools`, {}, { timeout: 120000 })
+  },
+  // 更新服务介绍
+  updateServiceIntro: (mcpServerId: string, serviceIntro: string) => {
+    return api.put(`/mcp-servers/meta/${mcpServerId}/service-intro`, { serviceIntro })
+  },
+  // 部署沙箱（独立于 saveMeta，管理员手动触发）
+  deploySandbox: (mcpServerId: string, data: {
+    sandboxId: string
+    transportType?: string
+    authType?: string
+    paramValues?: string
+    namespace?: string
+    resourceSpec?: string
+  }) => {
+    return api.post(`/mcp-servers/meta/${mcpServerId}/deploy-sandbox`, data, { timeout: 120000 })
+  },
 }
 
 // Sandbox 实例相关 API
@@ -390,11 +415,11 @@ export const sandboxApi = {
     return api.get(`/sandboxes`, { params })
   },
   // 导入沙箱实例
-  importSandbox: (data: { sandboxName: string; sandboxType: string; kubeConfig: string; namespace: string; description?: string; resourceSpec?: any; image?: string; capabilities?: string[] }) => {
+  importSandbox: (data: { sandboxName: string; sandboxType: string; kubeConfig: string; description?: string }) => {
     return api.post(`/sandboxes`, data)
   },
   // 更新沙箱实例
-  updateSandbox: (sandboxId: string, data: { sandboxName?: string; kubeConfig?: string; namespace?: string; description?: string; resourceSpec?: any; image?: string; capabilities?: string[] }) => {
+  updateSandbox: (sandboxId: string, data: { sandboxName?: string; kubeConfig?: string; description?: string }) => {
     return api.put(`/sandboxes/${sandboxId}`, data)
   },
   // 删除沙箱实例
@@ -408,5 +433,9 @@ export const sandboxApi = {
   // 手动触发健康检查
   healthCheck: (sandboxId: string) => {
     return api.post(`/sandboxes/${sandboxId}/health-check`)
+  },
+  // 获取沙箱集群的 Namespace 列表
+  listNamespaces: (sandboxId: string) => {
+    return api.get(`/sandboxes/${sandboxId}/namespaces`)
   },
 }

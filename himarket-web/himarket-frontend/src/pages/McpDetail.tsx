@@ -2,16 +2,16 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Layout } from "../components/Layout";
 import {
-  Spin, Tag, Button, message, Tabs, Alert, Table, Descriptions, Select, Input,
+  Spin, Tag, Button, message, Tabs, Alert, Descriptions, Tooltip,
 } from "antd";
 import {
   ArrowLeftOutlined, AppstoreOutlined,
   CopyOutlined, ToolOutlined, CodeOutlined,
-  LinkOutlined, ThunderboltOutlined, CheckOutlined,
-  EditOutlined, CloseOutlined,
+  LinkOutlined, ThunderboltOutlined,
+  RightOutlined,
 } from "@ant-design/icons";
 import APIs from "../lib/apis";
-import type { IProductDetail, IMcpMeta, ISandboxSimple } from "../lib/apis/product";
+import type { IProductDetail, IMcpMeta } from "../lib/apis/product";
 import { ProductIconRenderer } from "../components/icon/ProductIconRenderer";
 import { getIconString } from "../lib/iconUtils";
 import MarkdownRender from "../components/MarkdownRender";
@@ -25,19 +25,16 @@ function McpDetail() {
   const [meta, setMeta] = useState<IMcpMeta | null>(null);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<string>("intro");
-  const [remoteTransport, setRemoteTransport] = useState<"sse" | "http">("sse");
-  const [remoteAuthType, setRemoteAuthType] = useState<"none" | "bearer">("none");
-  const [remoteParamValues, setRemoteParamValues] = useState<Record<string, string>>({});
-  const [remoteConnecting, setRemoteConnecting] = useState(false);
-  const [remoteConfigJson, setRemoteConfigJson] = useState<string>("");
-  const [selectedSandbox, setSelectedSandbox] = useState<string | undefined>(undefined);
-  const [sandboxList, setSandboxList] = useState<ISandboxSimple[]>([]);
-  const [sandboxLoading, setSandboxLoading] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
   const [subscribed, setSubscribed] = useState(false);
-  const [subscribedEndpoint, setSubscribedEndpoint] = useState<{ endpointId: string; endpointUrl: string; protocol: string; subscribeParams: string } | null>(null);
-  const [remoteEditing, setRemoteEditing] = useState(false);
   const [unsubscribing, setUnsubscribing] = useState(false);
+  // 冷数据连接配置（从 product.mcpConfig 生成）
+  const [coldSseJson, setColdSseJson] = useState("");
+  const [coldHttpJson, setColdHttpJson] = useState("");
+  const [coldLocalJson, setColdLocalJson] = useState("");
+  // 热数据连接配置（从 meta.endpointUrl 生成）
+  const [hotSseJson, setHotSseJson] = useState("");
+  const [hotHttpJson, setHotHttpJson] = useState("");
 
   useEffect(() => {
     const fetchDetail = async () => {
@@ -58,37 +55,11 @@ function McpDetail() {
           } catch {
             // meta 可能不存在，不影响页面展示
           }
-          // 检查是否已订阅（当前用户的 endpoint 列表中是否有该产品）
+          // 检查是否已订阅（通过产品订阅状态）
           try {
-            const epRes = await APIs.getMyEndpoints();
-            if (epRes.code === "SUCCESS" && epRes.data) {
-              const myEp = epRes.data.find(ep => ep.productId === mcpProductId);
-              if (myEp) {
-                setSubscribed(true);
-                setSubscribedEndpoint({
-                  endpointId: myEp.endpointId,
-                  endpointUrl: myEp.endpointUrl,
-                  protocol: myEp.protocol,
-                  subscribeParams: myEp.subscribeParams,
-                });
-                // 回显 Remote 参数
-                if (myEp.subscribeParams) {
-                  try {
-                    const params = JSON.parse(myEp.subscribeParams);
-                    if (params.sandboxId) setSelectedSandbox(params.sandboxId);
-                    if (params.transportType) setRemoteTransport(params.transportType);
-                    if (params.authType) setRemoteAuthType(params.authType);
-                    if (params.extraParams) setRemoteParamValues(params.extraParams);
-                  } catch { /* ignore */ }
-                }
-                // 回显 configJson（Remote 订阅的场景）
-                if (myEp.endpointUrl && myEp.hostingType === "SANDBOX") {
-                  const sName = (myEp.mcpName || "mcp-server").toLowerCase().replace(/\s+/g, "-");
-                  const sConfig: Record<string, string> = { url: myEp.endpointUrl };
-                  if (myEp.protocol?.toLowerCase() === "sse") sConfig.type = "sse";
-                  setRemoteConfigJson(JSON.stringify({ mcpServers: { [sName]: sConfig } }, null, 2));
-                }
-              }
+            const status = await APIs.getProductSubscriptionStatus(mcpProductId);
+            if (status.hasSubscription) {
+              setSubscribed(true);
             }
           } catch {
             // 未登录或获取失败不影响页面
@@ -105,24 +76,6 @@ function McpDetail() {
     fetchDetail();
   }, [mcpProductId]);
 
-  // 获取沙箱列表
-  useEffect(() => {
-    const fetchSandboxes = async () => {
-      setSandboxLoading(true);
-      try {
-        const res = await APIs.getActiveSandboxes();
-        if (res.code === "SUCCESS" && res.data) {
-          setSandboxList(res.data);
-        }
-      } catch {
-        // 沙箱列表获取失败不影响页面
-      } finally {
-        setSandboxLoading(false);
-      }
-    };
-    fetchSandboxes();
-  }, []);
-
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
     message.success("已复制");
@@ -137,7 +90,23 @@ function McpDetail() {
   // 显示名称：优先 meta，fallback 到 product
   const displayName = meta?.displayName || meta?.mcpName || product?.name || "";
   const description = meta?.description || product?.description || "";
-  const protocolType = meta?.protocolType || product?.mcpConfig?.meta?.protocol || "";
+  const protocolType = (() => {
+    const set = new Set<string>();
+    if (meta?.protocolType) {
+      meta.protocolType.split(",").map(p => p.trim().toUpperCase()).filter(Boolean).forEach(p => set.add(p));
+    }
+    const coldProto = product?.mcpConfig?.meta?.protocol;
+    if (coldProto) {
+      coldProto.split(",").map((p: string) => p.trim().toUpperCase()).filter(Boolean).forEach((p: string) => set.add(p));
+    }
+    if (meta?.endpointProtocol) {
+      meta.endpointProtocol.split(",").map(p => p.trim().toUpperCase()).filter(Boolean).forEach(p => set.add(p));
+    }
+    if (product?.mcpConfig?.mcpServerConfig?.rawConfig && Object.keys(product.mcpConfig.mcpServerConfig.rawConfig).length > 0) {
+      set.add("STDIO");
+    }
+    return Array.from(set).join(",");
+  })();
   const origin = meta?.origin || "";
   const repoUrl = meta?.repoUrl || "";
   const tags = meta?.tags ? meta.tags.split(",").map(t => t.trim()).filter(Boolean) : [];
@@ -149,6 +118,8 @@ function McpDetail() {
     if (!toolsSource) return [];
     try {
       const parsed = typeof toolsSource === "string" ? JSON.parse(toolsSource) : toolsSource;
+      // 兼容两种格式：{tools: [...]} 或直接数组 [...]
+      if (Array.isArray(parsed)) return parsed;
       return parsed?.tools || [];
     } catch {
       return [];
@@ -163,82 +134,19 @@ function McpDetail() {
   };
   const originTag = origin ? (originMap[origin] || { text: origin, color: "default" }) : null;
 
-  // 解析 extraParams（管理员配置的参数列表）
-  const extraParams: Array<{ key: string; name: string; position: string; required: boolean; description: string; example: string }> = (() => {
-    if (!meta?.extraParams) return [];
-    try {
-      const parsed = JSON.parse(meta.extraParams);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch { return []; }
-  })();
-
-  // Remote 连接：通过沙箱订阅
-  const handleRemoteConnect = async () => {
-    if (!selectedSandbox) {
-      message.warning("请选择沙箱");
-      return;
-    }
-    if (!mcpProductId) return;
-    // 校验必填参数
-    const missing = extraParams.filter(p => p.required && !remoteParamValues[p.name]?.trim());
-    if (missing.length > 0) {
-      message.warning(`请填写必填参数：${missing.map(p => p.name).join("、")}`);
-      return;
-    }
-    setRemoteConnecting(true);
-    try {
-      const paramsJson = extraParams.length > 0 ? JSON.stringify(remoteParamValues) : undefined;
-      const res = await APIs.subscribeMcp(mcpProductId, {
-        sandboxId: selectedSandbox,
-        transportType: remoteTransport,
-        authType: remoteAuthType,
-        params: paramsJson,
-      });
-      if (res.code === "SUCCESS" && res.data) {
-        setSubscribed(true);
-        setRemoteEditing(false);
-        setSubscribedEndpoint({
-          endpointId: res.data.endpointId,
-          endpointUrl: res.data.endpointUrl,
-          protocol: res.data.protocol,
-          subscribeParams: res.data.subscribeParams,
-        });
-        // 从返回数据构建 configJson
-        if (res.data.endpointUrl) {
-          const sName = (meta?.mcpName || product?.name || "mcp-server").toLowerCase().replace(/\s+/g, "-");
-          const sConfig: Record<string, string> = { url: res.data.endpointUrl };
-          if (res.data.protocol?.toLowerCase() === "sse") sConfig.type = "sse";
-          setRemoteConfigJson(JSON.stringify({ mcpServers: { [sName]: sConfig } }, null, 2));
-        }
-        message.success("订阅成功，连接配置已生成");
-      } else {
-        message.error("订阅失败");
-      }
-    } catch {
-      message.error("订阅失败");
-    } finally {
-      setRemoteConnecting(false);
-    }
-  };
-
-  // 订阅 MCP（SSE/HTTP 类型）
+  // 订阅 MCP（走正常的产品订阅流程）
   const handleSubscribe = async () => {
     if (!mcpProductId) return;
     setSubscribing(true);
     try {
-      const res = await APIs.subscribeMcp(mcpProductId);
-      if (res.code === "SUCCESS" && res.data) {
-        setSubscribed(true);
-        setSubscribedEndpoint({
-          endpointId: res.data.endpointId,
-          endpointUrl: res.data.endpointUrl,
-          protocol: res.data.protocol,
-          subscribeParams: res.data.subscribeParams,
-        });
-        message.success("订阅成功");
-      } else {
-        message.error("订阅失败");
+      const consumerRes = await APIs.getPrimaryConsumer();
+      if (consumerRes.code !== "SUCCESS" || !consumerRes.data) {
+        message.error("获取消费者信息失败");
+        return;
       }
+      await APIs.subscribeProduct(consumerRes.data.consumerId, mcpProductId);
+      setSubscribed(true);
+      message.success("订阅成功");
     } catch (e: any) {
       const msg = e?.response?.data?.message || e?.message || "订阅失败";
       message.error(msg);
@@ -247,21 +155,19 @@ function McpDetail() {
     }
   };
 
-  // 取消订阅
+  // 取消订阅（走正常的产品取消订阅流程）
   const handleUnsubscribe = async () => {
-    if (!subscribedEndpoint?.endpointId) return;
+    if (!mcpProductId) return;
     setUnsubscribing(true);
     try {
-      const res = await APIs.unsubscribeMcp(subscribedEndpoint.endpointId);
-      if (res.code === "SUCCESS") {
-        setSubscribed(false);
-        setSubscribedEndpoint(null);
-        setRemoteConfigJson("");
-        setRemoteEditing(false);
-        message.success("已取消订阅");
-      } else {
-        message.error("取消订阅失败");
+      const consumerRes = await APIs.getPrimaryConsumer();
+      if (consumerRes.code !== "SUCCESS" || !consumerRes.data) {
+        message.error("获取消费者信息失败");
+        return;
       }
+      await APIs.unsubscribeProduct(consumerRes.data.consumerId, mcpProductId);
+      setSubscribed(false);
+      message.success("已取消订阅");
     } catch (e: any) {
       message.error(e?.response?.data?.message || "取消订阅失败");
     } finally {
@@ -269,106 +175,97 @@ function McpDetail() {
     }
   };
 
-  // 进入编辑模式（回显之前的参数）
-  const handleStartEdit = () => {
-    if (subscribedEndpoint?.subscribeParams) {
-      try {
-        const params = JSON.parse(subscribedEndpoint.subscribeParams);
-        if (params.sandboxId) setSelectedSandbox(params.sandboxId);
-        if (params.transportType) setRemoteTransport(params.transportType);
-        if (params.authType) setRemoteAuthType(params.authType);
-        if (params.extraParams) setRemoteParamValues(params.extraParams);
-      } catch { /* ignore */ }
+  // ==================== 冷数据连接配置（从 product.mcpConfig 生成，对齐后台逻辑） ====================
+  useEffect(() => {
+    if (!product?.mcpConfig?.mcpServerConfig) {
+      setColdSseJson(""); setColdHttpJson(""); setColdLocalJson("");
+      return;
     }
-    setRemoteEditing(true);
-  };
-
-  // 取消编辑
-  const handleCancelEdit = () => {
-    setRemoteEditing(false);
-  };
-
-  // 生成连接配置 JSON
-  const getConfigJson = (protocol: string) => {
-    if (!product) return "";
-    const serverName = (meta?.mcpName || product.name).toLowerCase().replace(/\s+/g, "-");
-
-    // 优先从 meta.connectionConfig 解析（管理员配置的完整连接信息）
-    if (meta?.connectionConfig) {
-      try {
-        const connConfig = JSON.parse(meta.connectionConfig);
-        // 如果 connectionConfig 本身就是完整的 mcpServers 格式，直接返回
-        if (connConfig.mcpServers) return JSON.stringify(connConfig, null, 2);
-        // 如果是 stdio 配置格式（有 command 字段）
-        if (connConfig.command) {
-          return JSON.stringify({ mcpServers: { [serverName]: connConfig } }, null, 2);
-        }
-        // 如果有 mcpServerConfig.domains，用它构建网络协议配置
-        if (connConfig.mcpServerConfig?.domains?.length > 0) {
-          const domain = connConfig.mcpServerConfig.domains[0];
-          const port = domain.port ? `:${domain.port}` : "";
-          const baseUrl = `${domain.protocol}://${domain.domain}${port}${connConfig.mcpServerConfig.path || ""}`;
-          if (protocol === "sse") {
-            return JSON.stringify({ mcpServers: { [serverName]: { type: "sse", url: `${baseUrl}/sse` } } }, null, 2);
-          }
-          return JSON.stringify({ mcpServers: { [serverName]: { url: baseUrl } } }, null, 2);
-        }
-        // 如果有 rawConfig（本地 stdio 等配置）
-        if (connConfig.mcpServerConfig?.rawConfig) {
-          return JSON.stringify(connConfig.mcpServerConfig.rawConfig, null, 2);
-        }
-      } catch { /* ignore */ }
-    }
-
-    // Fallback: 从 product.mcpConfig 构建
     const mcpConfig = product.mcpConfig;
-    if (mcpConfig?.mcpServerConfig?.rawConfig) {
-      return JSON.stringify(mcpConfig.mcpServerConfig.rawConfig, null, 2);
+    const serverName = meta?.mcpName || product.name;
+    const domains = mcpConfig.mcpServerConfig.domains;
+    const path = mcpConfig.mcpServerConfig.path;
+    const rawConfig = mcpConfig.mcpServerConfig.rawConfig;
+    const protocol = mcpConfig.meta?.protocol;
+
+    // 互斥：优先判断本地模式（stdio）
+    if (rawConfig) {
+      setColdLocalJson(JSON.stringify(rawConfig, null, 2));
+      setColdSseJson(""); setColdHttpJson("");
+      return;
     }
-    if (mcpConfig?.mcpServerConfig?.domains?.length > 0) {
-      const domain = mcpConfig.mcpServerConfig.domains[0];
-      const port = domain.port ? `:${domain.port}` : "";
-      const baseUrl = `${domain.protocol}://${domain.domain}${port}${mcpConfig.mcpServerConfig.path || ""}`;
-      if (protocol === "sse") {
-        return JSON.stringify({ mcpServers: { [serverName]: { type: "sse", url: `${baseUrl}/sse` } } }, null, 2);
+
+    // HTTP/SSE 模式
+    if (domains?.length > 0 && path) {
+      const domain = domains[0];
+      // 对齐后台 formatDomainWithPort 逻辑：默认端口（http:80, https:443）不显示
+      const proto = domain.protocol || "https";
+      let formattedDomain = domain.domain;
+      if (domain.port) {
+        const isDefault = (proto === "http" && domain.port === 80) || (proto === "https" && domain.port === 443);
+        if (!isDefault) formattedDomain = `${domain.domain}:${domain.port}`;
       }
-      return JSON.stringify({ mcpServers: { [serverName]: { url: baseUrl } } }, null, 2);
+      const baseUrl = `${proto}://${formattedDomain}`;
+      const fullUrl = `${baseUrl}${path || "/"}`;
+
+      if (protocol === "SSE") {
+        setColdSseJson(JSON.stringify({ mcpServers: { [serverName]: { type: "sse", url: fullUrl } } }, null, 2));
+        setColdHttpJson(""); setColdLocalJson("");
+      } else if (protocol === "StreamableHTTP") {
+        setColdHttpJson(JSON.stringify({ mcpServers: { [serverName]: { url: fullUrl } } }, null, 2));
+        setColdSseJson(""); setColdLocalJson("");
+      } else {
+        // protocol 为 null 或其他值：生成两种配置
+        setColdSseJson(JSON.stringify({ mcpServers: { [serverName]: { type: "sse", url: `${fullUrl}/sse` } } }, null, 2));
+        setColdHttpJson(JSON.stringify({ mcpServers: { [serverName]: { url: fullUrl } } }, null, 2));
+        setColdLocalJson("");
+      }
+      return;
     }
 
-    // stdio fallback：用 repoUrl 或 mcpName 推断
-    if (protocol === "stdio") {
-      const pkg = meta?.repoUrl
-        ? meta.repoUrl.replace(/^https?:\/\/www\.npmjs\.com\/package\//, "")
-        : `@mcp/${serverName}`;
-      return JSON.stringify({ mcpServers: { [serverName]: { type: "stdio", command: "npx", args: ["-y", pkg] } } }, null, 2);
-    }
+    setColdSseJson(""); setColdHttpJson(""); setColdLocalJson("");
+  }, [product, meta]);
 
-    return "{}";
+  // ==================== 热数据连接配置（从 meta.endpointUrl 生成） ====================
+  useEffect(() => {
+    if (!meta?.endpointUrl || meta.endpointStatus !== "ACTIVE") {
+      setHotSseJson(""); setHotHttpJson("");
+      return;
+    }
+    const serverName = meta.mcpName || product?.name || "mcp-server";
+    const protocol = (meta.endpointProtocol || "").toLowerCase();
+    const endpointUrl = meta.endpointUrl;
+
+    if (protocol === "sse") {
+      setHotSseJson(JSON.stringify({ mcpServers: { [serverName]: { type: "sse", url: endpointUrl } } }, null, 2));
+      setHotHttpJson("");
+    } else if (protocol === "streamablehttp" || protocol === "http") {
+      setHotHttpJson(JSON.stringify({ mcpServers: { [serverName]: { url: endpointUrl } } }, null, 2));
+      setHotSseJson("");
+    } else {
+      // 默认当 SSE 处理
+      setHotSseJson(JSON.stringify({ mcpServers: { [serverName]: { type: "sse", url: endpointUrl } } }, null, 2));
+      setHotHttpJson("");
+    }
+  }, [meta, product]);
+
+  // 工具卡片展开状态
+  const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set());
+  const toggleToolExpand = (idx: number) => {
+    setExpandedTools(prev => {
+      const next = new Set(prev);
+      next.has(idx) ? next.delete(idx) : next.add(idx);
+      return next;
+    });
   };
 
-  // 工具表格列
-  const toolColumns = [
-    {
-      title: "工具名称",
-      dataIndex: "name",
-      key: "name",
-      width: 200,
-      render: (name: string) => (
-        <span className="font-mono text-sm font-medium text-gray-800">
-          <CodeOutlined className="text-indigo-400 mr-1.5" />
-          {name}
-        </span>
-      ),
-    },
-    {
-      title: "描述",
-      dataIndex: "description",
-      key: "description",
-      render: (desc: string) => (
-        <span className="text-sm text-gray-600">{desc || "暂无描述"}</span>
-      ),
-    },
-  ];
+  // 解析参数类型的友好显示
+  const getTypeLabel = (prop: any): string => {
+    if (!prop) return "any";
+    if (prop.enum) return prop.enum.join(" | ");
+    if (prop.type === "array") return `${getTypeLabel(prop.items)}[]`;
+    return prop.type || "any";
+  };
 
   if (loading) {
     return (
@@ -485,28 +382,131 @@ function McpDetail() {
                     children: (
                       <div className="pb-6 min-h-[300px]">
                         {parsedTools.length > 0 ? (
-                          <>
-                            <div className="text-xs text-gray-400 mb-3">
+                          <div className="space-y-3">
+                            <div className="text-xs text-gray-400 mb-1">
                               共 {parsedTools.length} 个工具
                             </div>
-                            <Table
-                              dataSource={parsedTools.map((t: any, i: number) => ({ ...t, key: i }))}
-                              columns={toolColumns}
-                              pagination={false}
-                              size="small"
-                              expandable={{
-                                expandedRowRender: (tool: any) => {
-                                  if (!tool.inputSchema) return <span className="text-xs text-gray-400">无参数信息</span>;
-                                  return (
-                                    <pre className="text-xs bg-gray-50 rounded-lg p-3 overflow-x-auto text-gray-600">
-                                      {JSON.stringify(tool.inputSchema, null, 2)}
-                                    </pre>
-                                  );
-                                },
-                                rowExpandable: () => true,
-                              }}
-                            />
-                          </>
+                            {parsedTools.map((tool: any, idx: number) => {
+                              const schema = tool.inputSchema;
+                              const properties = schema?.properties || {};
+                              const required: string[] = schema?.required || [];
+                              const paramKeys = Object.keys(properties);
+                              const isExpanded = expandedTools.has(idx);
+
+                              return (
+                                <div
+                                  key={idx}
+                                  className="rounded-xl border border-gray-100 bg-white/80 hover:border-indigo-200 hover:shadow-sm transition-all duration-200"
+                                >
+                                  {/* 工具头部 */}
+                                  <div
+                                    className="flex items-start gap-3 p-4 cursor-pointer select-none"
+                                    onClick={() => toggleToolExpand(idx)}
+                                  >
+                                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-50 to-purple-50 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                      <CodeOutlined className="text-indigo-400 text-sm" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <span className="font-mono text-sm font-semibold text-gray-800">{tool.name}</span>
+                                        {paramKeys.length > 0 && (
+                                          <span className="text-[10px] text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">
+                                            {paramKeys.length} 个参数
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">
+                                        {tool.description || "暂无描述"}
+                                      </p>
+                                      {/* 参数预览 */}
+                                      {paramKeys.length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5 mt-2">
+                                          {paramKeys.slice(0, 6).map(key => (
+                                            <Tooltip
+                                              key={key}
+                                              title={properties[key]?.description || key}
+                                              placement="top"
+                                            >
+                                              <span
+                                                className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md ${
+                                                  required.includes(key)
+                                                    ? "bg-indigo-50 text-indigo-600 border border-indigo-100"
+                                                    : "bg-gray-50 text-gray-500 border border-gray-100"
+                                                }`}
+                                              >
+                                                {key}
+                                                <span className="text-[10px] opacity-60">{getTypeLabel(properties[key])}</span>
+                                                {required.includes(key) && <span className="text-indigo-400">*</span>}
+                                              </span>
+                                            </Tooltip>
+                                          ))}
+                                          {paramKeys.length > 6 && (
+                                            <span className="text-[11px] text-gray-400 px-1.5 py-0.5">
+                                              +{paramKeys.length - 6} 更多
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <RightOutlined
+                                      className={`text-gray-300 text-xs mt-2 transition-transform duration-200 ${isExpanded ? "rotate-90" : ""}`}
+                                    />
+                                  </div>
+
+                                  {/* 展开的参数详情 */}
+                                  {isExpanded && paramKeys.length > 0 && (
+                                    <div className="px-4 pb-4 pt-0">
+                                      <div className="rounded-lg bg-gray-50/80 border border-gray-100 overflow-hidden">
+                                        <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+                                          <span className="text-[11px] font-medium text-gray-500">参数详情</span>
+                                        </div>
+                                        <div className="divide-y divide-gray-100">
+                                          {paramKeys.map(key => {
+                                            const prop = properties[key];
+                                            const isRequired = required.includes(key);
+                                            return (
+                                              <div key={key} className="px-3 py-2.5 flex items-start gap-3">
+                                                <div className="flex items-center gap-1.5 min-w-0 flex-shrink-0" style={{ width: 140 }}>
+                                                  <span className="font-mono text-xs text-gray-700 truncate">{key}</span>
+                                                  {isRequired && (
+                                                    <Tag color="blue" className="m-0 border-0 text-[10px] leading-4 px-1">必填</Tag>
+                                                  )}
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                  <div className="flex items-center gap-2 mb-0.5">
+                                                    <Tag className="m-0 border-0 bg-purple-50 text-purple-500 text-[10px] leading-4 px-1.5">
+                                                      {getTypeLabel(prop)}
+                                                    </Tag>
+                                                    {prop?.default !== undefined && prop?.default !== "" && (
+                                                      <span className="text-[10px] text-gray-400">
+                                                        默认: {JSON.stringify(prop.default)}
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                  {prop?.description && (
+                                                    <p className="text-[11px] text-gray-500 leading-relaxed mt-0.5">{prop.description}</p>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* 无参数时展开提示 */}
+                                  {isExpanded && paramKeys.length === 0 && (
+                                    <div className="px-4 pb-4 pt-0">
+                                      <div className="text-xs text-gray-400 bg-gray-50 rounded-lg p-3 text-center">
+                                        此工具无需参数
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         ) : (
                           <div className="text-gray-400 text-center py-12">
                             <ToolOutlined className="text-3xl mb-2 block" />
@@ -531,11 +531,10 @@ function McpDetail() {
                   连接配置
                 </h3>
                 {(() => {
-                  // 解析协议列表（支持逗号分隔多值，如 "stdio,sse"）
-                  const protocols = protocolType
-                    ? protocolType.toLowerCase().split(",").map(p => p.trim()).filter(Boolean)
-                    : [];
-                  if (protocols.length === 0) {
+                  const hasHot = subscribed && !!(hotSseJson || hotHttpJson);
+                  const hasCold = !!(coldSseJson || coldHttpJson || coldLocalJson);
+
+                  if (!hasHot && !hasCold) {
                     return (
                       <div className="text-xs text-gray-400 text-center py-4">
                         暂无连接配置信息
@@ -543,100 +542,72 @@ function McpDetail() {
                     );
                   }
 
-                  const hasStdio = protocols.includes("stdio");
-                  const hasSse = protocols.includes("sse");
-                  const hasHttp = protocols.includes("http");
-                  const hasNetworkProtocol = hasSse || hasHttp;
-                  const isGatewayOrNacos = origin === "GATEWAY" || origin === "NACOS";
+                  const tabItems: { key: string; label: React.ReactNode; children: React.ReactNode }[] = [];
 
-                  // 构建 tab 列表
-                  const tabItems: { key: string; label: string; children: React.ReactNode }[] = [];
-
-                  // Remote tab（stdio 或标记需要沙箱托管时展示）
-                  if (hasStdio || meta?.sandboxRequired) {
+                  // Stdio 冷数据（自定义导入的本地配置）
+                  if (coldLocalJson) {
                     tabItems.push({
-                      key: "remote",
-                      label: "Remote",
-                      children: renderRemoteTab(),
-                    });
-                    tabItems.push({
-                      key: "stdio",
-                      label: "STDIO",
-                      children: renderConfigJsonBlock(getConfigJson("stdio")),
+                      key: "local",
+                      label: "Stdio",
+                      children: renderConfigJsonBlock(coldLocalJson),
                     });
                   }
 
-                  // SSE tab
-                  if (hasSse) {
+                  // SSE：热数据优先，fallback 冷数据（coldLocalJson 存在时无冷 SSE，但热 SSE 仍需展示）
+                  const sseContent = (subscribed && hotSseJson) ? hotSseJson : coldSseJson;
+                  if (sseContent) {
                     tabItems.push({
                       key: "sse",
                       label: "SSE",
-                      children: (() => {
-                        if (isGatewayOrNacos || subscribed) {
-                          return renderConfigJsonBlock(getConfigJson("sse"));
-                        }
-                        return <p className="text-xs text-gray-400 py-2">订阅后即可获取连接配置</p>;
-                      })(),
+                      children: renderConfigJsonBlock(sseContent),
                     });
                   }
 
-                  // Streamable HTTP tab
-                  if (hasHttp) {
+                  // Streamable HTTP：热数据优先，fallback 冷数据
+                  const httpContent = (subscribed && hotHttpJson) ? hotHttpJson : coldHttpJson;
+                  if (httpContent) {
                     tabItems.push({
                       key: "http",
                       label: "Streamable HTTP",
-                      children: (() => {
-                        if (isGatewayOrNacos || subscribed) {
-                          return renderConfigJsonBlock(getConfigJson("http"));
-                        }
-                        return <p className="text-xs text-gray-400 py-2">订阅后即可获取连接配置</p>;
-                      })(),
+                      children: renderConfigJsonBlock(httpContent),
                     });
                   }
 
+                  const defaultKey = tabItems[0]?.key || "sse";
+
                   return (
                     <div>
-                      <div className="mb-3 flex items-center gap-2">
-                        {protocols.map(p => (
-                          <Tag key={p} className="m-0 border-0 bg-gray-100 text-gray-600 text-xs">{p.toUpperCase()}</Tag>
-                        ))}
-                        {subscribed && (
+                      {subscribed && (
+                        <div className="mb-3">
                           <Tag color="green" className="m-0 border-0">已订阅</Tag>
-                        )}
-                      </div>
-                      <Tabs size="small" defaultActiveKey={tabItems[0]?.key} items={tabItems} />
-                      {/* 订阅/取消订阅按钮（仅网络协议类型且不需要沙箱托管时展示，沙箱托管在 Remote tab 内处理） */}
-                      {hasNetworkProtocol && !meta?.sandboxRequired && (
-                        <div className="mt-3">
-                          {!subscribed ? (
-                            <div className="space-y-2">
-                              {isGatewayOrNacos && (
-                                <p className="text-xs text-gray-400">订阅后即可使用该连接</p>
-                              )}
-                              <Button
-                                type="primary"
-                                size="small"
-                                icon={<ThunderboltOutlined />}
-                                loading={subscribing}
-                                onClick={handleSubscribe}
-                                block
-                              >
-                                订阅
-                              </Button>
-                            </div>
-                          ) : (
-                            <Button
-                              size="small"
-                              danger
-                              loading={unsubscribing}
-                              onClick={handleUnsubscribe}
-                              block
-                            >
-                              取消订阅
-                            </Button>
-                          )}
                         </div>
                       )}
+                      <Tabs size="small" defaultActiveKey={defaultKey} items={tabItems} />
+                      {/* 订阅/取消订阅 */}
+                      <div className="mt-3">
+                        {!subscribed ? (
+                          <Button
+                            type="primary"
+                            size="small"
+                            icon={<ThunderboltOutlined />}
+                            loading={subscribing}
+                            onClick={handleSubscribe}
+                            block
+                          >
+                            订阅
+                          </Button>
+                        ) : (
+                          <Button
+                            size="small"
+                            danger
+                            loading={unsubscribing}
+                            onClick={handleUnsubscribe}
+                            block
+                          >
+                            取消订阅
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   );
                 })()}
@@ -701,162 +672,6 @@ function McpDetail() {
     </Layout>
   );
 
-  function renderRemoteTab() {
-    // 已订阅 + 非编辑模式：显示配置 + 取消订阅/修改按钮
-    if (subscribed && !remoteEditing) {
-      return (
-        <div className="space-y-3">
-          {renderConfigJsonBlock(remoteConfigJson)}
-          <div className="flex gap-2">
-            <Button
-              size="small"
-              danger
-              loading={unsubscribing}
-              onClick={handleUnsubscribe}
-              block
-            >
-              取消订阅
-            </Button>
-            <Button
-              size="small"
-              icon={<EditOutlined />}
-              onClick={handleStartEdit}
-              block
-            >
-              修改
-            </Button>
-          </div>
-        </div>
-      );
-    }
-
-    // 未订阅 或 编辑模式：显示参数表单
-    return (
-      <div className="space-y-3">
-        {!remoteEditing && (
-          <p className="text-xs text-gray-400">订阅后即可获取连接配置</p>
-        )}
-        {/* 沙箱选择 */}
-        <div>
-          <div className="text-xs text-gray-500 mb-1.5">选择沙箱</div>
-          <Select
-            value={selectedSandbox}
-            onChange={(v) => { setSelectedSandbox(v); setRemoteConfigJson(""); }}
-            placeholder="请选择沙箱实例"
-            size="small"
-            className="w-full"
-            loading={sandboxLoading}
-            notFoundContent={sandboxLoading ? <Spin size="small" /> : "暂无可用沙箱"}
-            options={sandboxList.map(s => ({
-              value: s.sandboxId,
-              label: s.sandboxName,
-            }))}
-          />
-        </div>
-
-        {/* 传输类型选择 */}
-        <div>
-          <div className="text-xs text-gray-500 mb-1.5">传输类型</div>
-          <Select
-            value={remoteTransport}
-            onChange={(v) => { setRemoteTransport(v); setRemoteConfigJson(""); }}
-            size="small"
-            className="w-full"
-            options={[
-              { value: "sse", label: "SSE" },
-              { value: "http", label: "Streamable HTTP" },
-            ]}
-          />
-        </div>
-
-        {/* 鉴权方式 */}
-        <div>
-          <div className="text-xs text-gray-500 mb-1.5">鉴权方式</div>
-          <Select
-            value={remoteAuthType}
-            onChange={(v) => setRemoteAuthType(v)}
-            size="small"
-            className="w-full"
-            options={[
-              { value: "none", label: "无鉴权" },
-              { value: "bearer", label: "Bearer Token", disabled: true },
-            ]}
-          />
-        </div>
-
-        {/* 参数输入 */}
-        {extraParams.length > 0 && (
-          <div>
-            <div className="text-xs text-gray-500 mb-1.5">参数配置</div>
-            <div className="space-y-2">
-              {extraParams.map((p) => (
-                <div key={p.name}>
-                  <div className="flex items-center gap-1 mb-0.5">
-                    <span className="text-xs text-gray-600 font-mono">{p.name}</span>
-                    {p.required && <span className="text-red-400 text-xs">*</span>}
-                    {p.position && (
-                      <Tag className="m-0 border-0 bg-gray-100 text-gray-400 text-[10px] leading-tight px-1 py-0">{p.position}</Tag>
-                    )}
-                  </div>
-                  {p.description && (
-                    <div className="text-[10px] text-gray-400 mb-0.5">{p.description}</div>
-                  )}
-                  <Input
-                    size="small"
-                    placeholder={p.example || `请输入 ${p.name}`}
-                    value={remoteParamValues[p.name] || ""}
-                    onChange={(e) => setRemoteParamValues(prev => ({ ...prev, [p.name]: e.target.value }))}
-                    className="font-mono text-xs"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 按钮区域 */}
-        {remoteEditing ? (
-          <div className="flex gap-2">
-            <Button
-              size="small"
-              icon={<CloseOutlined />}
-              onClick={handleCancelEdit}
-              block
-            >
-              取消
-            </Button>
-            <Button
-              type="primary"
-              size="small"
-              icon={<CheckOutlined />}
-              loading={remoteConnecting}
-              onClick={handleRemoteConnect}
-              block
-            >
-              确认修改
-            </Button>
-          </div>
-        ) : (
-          <Button
-            type="primary"
-            size="small"
-            icon={<ThunderboltOutlined />}
-            loading={remoteConnecting}
-            onClick={handleRemoteConnect}
-            block
-          >
-            订阅
-          </Button>
-        )}
-        {remoteConnecting && (
-          <div className="text-xs text-gray-400 text-center mt-2 animate-pulse">
-            正在部署中，请稍候...
-          </div>
-        )}
-      </div>
-    );
-  }
-
   // JSON 语法高亮（浅色主题）
   function highlightJson(json: string) {
     return json.replace(
@@ -898,15 +713,6 @@ function McpDetail() {
     );
   }
 
-  // 从已订阅的 endpoint 构建配置 JSON
-  function getSubscribedConfigJson() {
-    if (!subscribedEndpoint?.endpointUrl) return "";
-    const serverName = (meta?.mcpName || product?.name || "mcp-server").toLowerCase().replace(/\s+/g, "-");
-    const protocol = subscribedEndpoint.protocol?.toLowerCase() || protocolType?.toLowerCase() || "sse";
-    const serverConfig: Record<string, string> = { url: subscribedEndpoint.endpointUrl };
-    if (protocol === "sse") serverConfig.type = "sse";
-    return JSON.stringify({ mcpServers: { [serverName]: serverConfig } }, null, 2);
-  }
 }
 
 export default McpDetail;

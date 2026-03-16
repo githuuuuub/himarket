@@ -45,6 +45,7 @@ import com.alibaba.himarket.entity.ProductRef;
 import com.alibaba.himarket.entity.ProductSubscription;
 import com.alibaba.himarket.repository.McpServerEndpointRepository;
 import com.alibaba.himarket.repository.McpServerMetaRepository;
+import com.alibaba.himarket.repository.ProductPublicationRepository;
 import com.alibaba.himarket.repository.ProductRefRepository;
 import com.alibaba.himarket.repository.ProductRepository;
 import com.alibaba.himarket.repository.SubscriptionRepository;
@@ -54,6 +55,8 @@ import com.alibaba.himarket.service.McpSandboxDeployService;
 import com.alibaba.himarket.service.McpServerService;
 import com.alibaba.himarket.service.NacosService;
 import com.alibaba.himarket.service.SandboxService;
+import com.alibaba.himarket.service.hichat.manager.ToolManager;
+import com.alibaba.himarket.service.mcp.McpConnectionConfig;
 import com.alibaba.himarket.support.chat.mcp.MCPTransportConfig;
 import com.alibaba.himarket.support.consumer.ConsumerAuthConfig;
 import com.alibaba.himarket.support.consumer.McpAuthConfig;
@@ -62,9 +65,13 @@ import com.alibaba.himarket.support.enums.ProductStatus;
 import com.alibaba.himarket.support.enums.SourceType;
 import com.alibaba.himarket.support.enums.SubscriptionStatus;
 import com.alibaba.himarket.support.product.NacosRefConfig;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.agentscope.core.tool.mcp.McpClientWrapper;
+import io.modelcontextprotocol.spec.McpSchema;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -85,6 +92,7 @@ public class McpServerServiceImpl implements McpServerService {
     private final McpServerEndpointRepository endpointRepository;
     private final ProductRefRepository productRefRepository;
     private final ProductRepository productRepository;
+    private final ProductPublicationRepository publicationRepository;
     private final SubscriptionRepository subscriptionRepository;
     private final ContextHolder contextHolder;
     private final ConsumerService consumerService;
@@ -93,6 +101,8 @@ public class McpServerServiceImpl implements McpServerService {
     private final SandboxService sandboxService;
     private final McpSandboxDeployService mcpSandboxDeployService;
     private final PlatformTransactionManager transactionManager;
+    private final ToolManager toolManager;
+    private final ObjectMapper objectMapper;
 
     @Override
     @Transactional
@@ -158,6 +168,13 @@ public class McpServerServiceImpl implements McpServerService {
 
         // 同步创建/更新 ProductRef，使 MCP 配置在产品关联中可见
         syncProductRef(meta, param);
+
+        // 网关/Nacos 导入的非沙箱 MCP：同步创建/更新公共 endpoint（userId=*）
+        if (!Boolean.TRUE.equals(meta.getSandboxRequired())
+                && ("GATEWAY".equalsIgnoreCase(meta.getOrigin())
+                        || "NACOS".equalsIgnoreCase(meta.getOrigin()))) {
+            syncPublicEndpoint(meta);
+        }
 
         return new McpMetaResult().convertFrom(meta);
     }
@@ -235,6 +252,10 @@ public class McpServerServiceImpl implements McpServerService {
         metaParam.setToolsConfig(param.getToolsConfig());
         metaParam.setCreatedBy(param.getCreatedBy());
         metaParam.setSandboxRequired(param.getSandboxRequired());
+        metaParam.setSandboxId(param.getSandboxId());
+        metaParam.setTransportType(param.getTransportType());
+        metaParam.setAuthType(param.getAuthType());
+        metaParam.setParamValues(param.getParamValues());
 
         return saveMeta(metaParam);
     }
@@ -276,8 +297,98 @@ public class McpServerServiceImpl implements McpServerService {
     @Override
     public List<McpMetaResult> listMetaByProduct(String productId) {
         return metaRepository.findByProductId(productId).stream()
-                .map(m -> new McpMetaResult().convertFrom(m))
+                .map(
+                        m -> {
+                            McpMetaResult result = new McpMetaResult().convertFrom(m);
+                            // 查询公共 endpoint（userId=*）以获取沙箱托管后的连接地址
+                            endpointRepository
+                                    .findByMcpServerIdAndUserIdInAndStatus(
+                                            m.getMcpServerId(), List.of("*"), "ACTIVE")
+                                    .stream()
+                                    .findFirst()
+                                    .ifPresent(
+                                            ep -> {
+                                                result.setEndpointUrl(ep.getEndpointUrl());
+                                                result.setEndpointProtocol(ep.getProtocol());
+                                                result.setEndpointStatus(ep.getStatus());
+                                                result.setSubscribeParams(ep.getSubscribeParams());
+                                                result.setEndpointHostingType(ep.getHostingType());
+                                            });
+                            return result;
+                        })
                 .collect(Collectors.toList());
+    }
+
+    @Override
+    public McpMetaResult refreshTools(String mcpServerId) {
+        McpServerMeta meta = findMeta(mcpServerId);
+
+        // 优先使用热数据 endpoint URL
+        String endpointUrl =
+                endpointRepository
+                        .findByMcpServerIdAndUserIdInAndStatus(mcpServerId, List.of("*"), "ACTIVE")
+                        .stream()
+                        .findFirst()
+                        .map(McpServerEndpoint::getEndpointUrl)
+                        .orElse(null);
+
+        String transportType = "sse";
+
+        // 没有热数据时，从冷数据 connectionConfig 解析
+        if (endpointUrl == null && StrUtil.isNotBlank(meta.getConnectionConfig())) {
+            try {
+                McpConnectionConfig cfg = McpConnectionConfig.parse(meta.getConnectionConfig());
+                if (cfg.isMcpServersFormat()) {
+                    McpConnectionConfig.McpServerEntry entry =
+                            cfg.getMcpServers().values().iterator().next();
+                    Object url = entry.getExtra().get("url");
+                    if (url != null) {
+                        endpointUrl = url.toString();
+                        Object type = entry.getExtra().get("type");
+                        if (type != null && "sse".equalsIgnoreCase(type.toString())) {
+                            transportType = "sse";
+                        } else {
+                            transportType = "http";
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("解析 connectionConfig 失败: {}", e.getMessage());
+            }
+        }
+
+        if (endpointUrl == null) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "无可用的连接地址，请先配置连接点或部署沙箱");
+        }
+
+        fetchAndSaveToolsListOrThrow(meta, endpointUrl, transportType);
+        return new McpMetaResult().convertFrom(meta);
+    }
+
+    @Override
+    @Transactional
+    public McpMetaResult updateServiceIntro(String mcpServerId, String serviceIntro) {
+        McpServerMeta meta = findMeta(mcpServerId);
+        meta.setServiceIntro(serviceIntro);
+        metaRepository.save(meta);
+        return new McpMetaResult().convertFrom(meta);
+    }
+
+    @Override
+    @Transactional
+    public McpMetaResult deploySandbox(String mcpServerId, SaveMcpMetaParam param) {
+        McpServerMeta meta = findMeta(mcpServerId);
+        if (!Boolean.TRUE.equals(meta.getSandboxRequired())) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "该 MCP 配置未启用沙箱托管");
+        }
+        if (StrUtil.isBlank(param.getSandboxId())) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "请选择沙箱实例");
+        }
+        // 将 meta 上的字段补充到 param 中，deploySandboxForMeta 需要用到
+        param.setProductId(meta.getProductId());
+        param.setMcpName(meta.getMcpName());
+        deploySandboxForMeta(meta, param);
+        return new McpMetaResult().convertFrom(meta);
     }
 
     @Override
@@ -285,6 +396,15 @@ public class McpServerServiceImpl implements McpServerService {
     public void deleteMeta(String mcpServerId) {
         McpServerMeta meta = findMeta(mcpServerId);
         String productId = meta.getProductId();
+
+        // 已发布的产品不允许删除 MCP 配置
+        if (publicationRepository.existsByProductId(productId)) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "产品已发布，请先下架后再删除 MCP 配置");
+        }
+
+        // 对沙箱托管的 endpoint 执行 undeploy
+        undeploySandboxEndpoints(meta);
+
         // 级联删除所有 endpoint
         endpointRepository.deleteByMcpServerId(mcpServerId);
         metaRepository.delete(meta);
@@ -311,8 +431,16 @@ public class McpServerServiceImpl implements McpServerService {
             throw new BusinessException(ErrorCode.INVALID_REQUEST, "该产品下没有 MCP 配置");
         }
 
+        // 已发布的产品不允许删除 MCP 配置
+        if (publicationRepository.existsByProductId(productId)) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "产品已发布，请先下架后再删除 MCP 配置");
+        }
+
         // 级联删除所有 endpoint 和 meta
         for (McpServerMeta meta : metas) {
+            // 对沙箱托管的 endpoint 执行 undeploy
+            undeploySandboxEndpoints(meta);
+
             endpointRepository.deleteByMcpServerId(meta.getMcpServerId());
             metaRepository.delete(meta);
         }
@@ -396,6 +524,19 @@ public class McpServerServiceImpl implements McpServerService {
         String origin = meta.getOrigin();
         String protocol = meta.getProtocolType();
 
+        // 沙箱预部署场景：如果存在公共 endpoint（userId=*），直接复用
+        if (Boolean.TRUE.equals(meta.getSandboxRequired())) {
+            List<McpServerEndpoint> publicEndpoints =
+                    endpointRepository.findByMcpServerIdAndUserIdInAndStatus(
+                            meta.getMcpServerId(), List.of("*"), "ACTIVE");
+            if (!publicEndpoints.isEmpty()) {
+                McpServerEndpoint publicEp = publicEndpoints.get(0);
+                // 同步写入 product_subscription
+                syncProductSubscription(productId, userId, param);
+                return buildMyEndpointResult(publicEp, meta);
+            }
+        }
+
         // 判断是否为沙箱订阅（Remote 场景）
         boolean isSandbox = param != null && StrUtil.isNotBlank(param.getSandboxId());
 
@@ -413,7 +554,10 @@ public class McpServerServiceImpl implements McpServerService {
                         && StrUtil.isNotBlank(existing.getHostingInstanceId())) {
                     try {
                         mcpSandboxDeployService.undeploy(
-                                existing.getHostingInstanceId(), existing.getMcpName(), userId);
+                                existing.getHostingInstanceId(),
+                                existing.getMcpName(),
+                                userId,
+                                extractNamespace(existing));
                         log.info(
                                 "修改订阅：已删除旧 ToolServer CRD, sandboxId={}, mcpName={}",
                                 existing.getHostingInstanceId(),
@@ -495,7 +639,9 @@ public class McpServerServiceImpl implements McpServerService {
                             apiKey,
                             authType,
                             param.getParams(),
-                            meta.getExtraParams());
+                            meta.getExtraParams(),
+                            null,
+                            null);
 
             protocol = transportType;
             hostingType = "SANDBOX";
@@ -506,7 +652,8 @@ public class McpServerServiceImpl implements McpServerService {
                     JSONUtil.createObj()
                             .set("sandboxId", param.getSandboxId())
                             .set("transportType", transportType)
-                            .set("authType", authType);
+                            .set("authType", authType)
+                            .set("namespace", "default");
             if (StrUtil.isNotBlank(param.getParams())) {
                 subParams.set("extraParams", JSONUtil.parse(param.getParams()));
             }
@@ -579,7 +726,10 @@ public class McpServerServiceImpl implements McpServerService {
                 && StrUtil.isNotBlank(endpoint.getHostingInstanceId())) {
             try {
                 mcpSandboxDeployService.undeploy(
-                        endpoint.getHostingInstanceId(), endpoint.getMcpName(), userId);
+                        endpoint.getHostingInstanceId(),
+                        endpoint.getMcpName(),
+                        userId,
+                        extractNamespace(endpoint));
             } catch (Exception e) {
                 log.warn("删除 ToolServer CRD 失败（不影响取消订阅）: {}", e.getMessage());
             }
@@ -674,7 +824,26 @@ public class McpServerServiceImpl implements McpServerService {
             List<String> productIds, String userId) {
         List<MCPTransportConfig> configs = new ArrayList<>();
 
+        // 获取用户的 primary consumer，用于校验订阅关系
+        String consumerId = null;
+        try {
+            ConsumerResult primaryConsumer = consumerService.getPrimaryConsumer(userId);
+            consumerId = primaryConsumer.getConsumerId();
+        } catch (Exception e) {
+            log.warn("[resolveTransportConfigs] 用户 {} 无 consumer，无法校验订阅，返回空列表", userId);
+            return configs;
+        }
+
         for (String productId : productIds) {
+            // 校验用户是否已订阅该产品
+            Optional<ProductSubscription> subscription =
+                    subscriptionRepository.findByConsumerIdAndProductId(consumerId, productId);
+            if (subscription.isEmpty()
+                    || subscription.get().getStatus() != SubscriptionStatus.APPROVED) {
+                log.debug("[resolveTransportConfigs] 用户 {} 未订阅产品 {} 或订阅未生效，跳过", userId, productId);
+                continue;
+            }
+
             List<McpServerMeta> metas = metaRepository.findByProductId(productId);
             if (metas.isEmpty()) {
                 log.warn("[resolveTransportConfigs] 产品 {} 无 MCP meta，跳过", productId);
@@ -725,6 +894,8 @@ public class McpServerServiceImpl implements McpServerService {
             configs.add(
                     MCPTransportConfig.builder()
                             .mcpServerName(endpoint.getMcpName())
+                            .productId(productId)
+                            .description(meta.getDescription())
                             .transportMode(transportMode)
                             .url(url)
                             .headers(resolveAuthHeaders(endpoint, meta, userId))
@@ -1036,6 +1207,305 @@ public class McpServerServiceImpl implements McpServerService {
     }
 
     /**
+     * 非沙箱 MCP：从 meta.connectionConfig 提取 endpoint URL，创建/更新公共 endpoint（userId=*）。
+     * 使 resolveTransportConfigs 能统一从 endpoint 表获取连接信息，无需 fallback 到冷数据。
+     * 默认生成 SSE 协议的 endpoint，URL 自动拼接 /sse 后缀。
+     */
+    private void syncPublicEndpoint(McpServerMeta meta) {
+        String connectionConfig = meta.getConnectionConfig();
+        if (StrUtil.isBlank(connectionConfig)) {
+            return;
+        }
+
+        String endpointUrl;
+        try {
+            cn.hutool.json.JSONObject connJson = JSONUtil.parseObj(connectionConfig);
+            endpointUrl = extractEndpointUrl(connJson, meta.getMcpName(), meta.getProtocolType());
+        } catch (Exception e) {
+            log.debug(
+                    "[syncPublicEndpoint] 无法从 connectionConfig 提取 URL，跳过: mcpServerId={}, error={}",
+                    meta.getMcpServerId(),
+                    e.getMessage());
+            return;
+        }
+
+        if (StrUtil.isBlank(endpointUrl)) {
+            return;
+        }
+
+        // 确定协议：明确指定 StreamableHTTP 的保持原样，其余统一走 SSE 并拼接 /sse 后缀
+        String protocol = StrUtil.blankToDefault(meta.getProtocolType(), "");
+        boolean isStreamableHttp =
+                "StreamableHTTP".equalsIgnoreCase(protocol) || "HTTP".equalsIgnoreCase(protocol);
+
+        if (!isStreamableHttp) {
+            // SSE 或未指定协议：拼接 /sse 后缀
+            if (!endpointUrl.endsWith("/sse")) {
+                endpointUrl =
+                        endpointUrl.endsWith("/") ? endpointUrl + "sse" : endpointUrl + "/sse";
+            }
+            protocol = "sse";
+        }
+
+        String origin = StrUtil.blankToDefault(meta.getOrigin(), "ADMIN");
+        String hostingType;
+        if ("GATEWAY".equalsIgnoreCase(origin)) {
+            hostingType = "GATEWAY";
+        } else if ("NACOS".equalsIgnoreCase(origin)) {
+            hostingType = "NACOS";
+        } else {
+            hostingType = "DIRECT";
+        }
+
+        upsertEndpoint(
+                meta.getMcpServerId(),
+                meta.getMcpName(),
+                endpointUrl,
+                hostingType,
+                protocol,
+                "*",
+                "public",
+                null,
+                null);
+
+        log.info(
+                "[syncPublicEndpoint] 公共 endpoint 已同步: mcpServerId={}, protocol={}, url={}",
+                meta.getMcpServerId(),
+                protocol,
+                endpointUrl);
+    }
+
+    /**
+     * 管理员预部署沙箱：在 saveMeta 时自动向沙箱集群下发 CRD，创建公共 endpoint（userId=*）。
+     * 前台用户订阅时直接复用此公共 endpoint，无需再选沙箱。
+     */
+    private void deploySandboxForMeta(McpServerMeta meta, SaveMcpMetaParam param) {
+        String sandboxId = param.getSandboxId();
+        String transportType =
+                "stdio".equalsIgnoreCase(meta.getProtocolType())
+                        ? "stdio"
+                        : StrUtil.blankToDefault(param.getTransportType(), "sse");
+        String authType = StrUtil.blankToDefault(param.getAuthType(), "none");
+        String paramValues = param.getParamValues();
+        String adminUserId = getCreatedByOrDefault();
+
+        // 先清理旧的公共 endpoint 和 CRD
+        List<McpServerEndpoint> existingPublic =
+                endpointRepository.findByMcpServerIdAndUserIdInAndStatus(
+                        meta.getMcpServerId(), List.of("*"), "ACTIVE");
+        for (McpServerEndpoint existing : existingPublic) {
+            if ("SANDBOX".equalsIgnoreCase(existing.getHostingType())
+                    && StrUtil.isNotBlank(existing.getHostingInstanceId())) {
+                try {
+                    mcpSandboxDeployService.undeploy(
+                            existing.getHostingInstanceId(),
+                            existing.getMcpName(),
+                            adminUserId,
+                            extractNamespace(existing));
+                } catch (Exception e) {
+                    log.warn("清理旧公共 CRD 失败: {}", e.getMessage());
+                }
+            }
+            endpointRepository.delete(existing);
+        }
+
+        // 分步部署，任何一步失败都回滚前面的工作
+        String endpointUrl = null;
+        McpServerEndpoint createdEndpoint = null;
+        String currentStep = "部署沙箱";
+        try {
+            // Step 1: 部署 CRD 到沙箱
+            var sandbox = sandboxService.getSandbox(sandboxId);
+            endpointUrl =
+                    mcpSandboxDeployService.deploy(
+                            sandboxId,
+                            meta.getMcpServerId(),
+                            meta.getMcpName(),
+                            adminUserId,
+                            transportType,
+                            meta.getConnectionConfig(),
+                            "",
+                            authType,
+                            paramValues,
+                            meta.getExtraParams(),
+                            param.getNamespace(),
+                            param.getResourceSpec());
+
+            // SSE 类型需要 /sse 后缀（stdio 在沙箱中也会被转为 SSE 暴露）
+            if (("sse".equalsIgnoreCase(transportType) || "stdio".equalsIgnoreCase(transportType))
+                    && endpointUrl != null
+                    && !endpointUrl.endsWith("/sse")) {
+                endpointUrl = endpointUrl + "/sse";
+            }
+
+            // Step 2: 创建公共 endpoint
+            currentStep = "创建连接";
+            cn.hutool.json.JSONObject subParams =
+                    JSONUtil.createObj()
+                            .set("sandboxId", sandboxId)
+                            .set("transportType", transportType)
+                            .set("authType", authType)
+                            .set(
+                                    "namespace",
+                                    StrUtil.blankToDefault(param.getNamespace(), "default"));
+            if (StrUtil.isNotBlank(paramValues)) {
+                subParams.set("extraParams", JSONUtil.parse(paramValues));
+            }
+            createdEndpoint =
+                    upsertEndpoint(
+                            meta.getMcpServerId(),
+                            meta.getMcpName(),
+                            endpointUrl,
+                            "SANDBOX",
+                            transportType,
+                            "*",
+                            sandboxId,
+                            sandbox.getSandboxName(),
+                            subParams.toString());
+
+            log.info(
+                    "管理员预部署沙箱成功: mcpName={}, sandboxId={}, endpoint={}",
+                    meta.getMcpName(),
+                    sandboxId,
+                    endpointUrl);
+
+        } catch (Exception e) {
+            log.error(
+                    "管理员预部署沙箱失败[{}]: mcpName={}, sandboxId={}",
+                    currentStep,
+                    meta.getMcpName(),
+                    sandboxId,
+                    e);
+
+            // 回滚：删除已创建的 endpoint
+            if (createdEndpoint != null) {
+                try {
+                    endpointRepository.delete(createdEndpoint);
+                } catch (Exception re) {
+                    log.warn("回滚删除 endpoint 失败: {}", re.getMessage());
+                }
+            }
+            // 回滚：删除已部署的 CRD
+            if (endpointUrl != null) {
+                try {
+                    mcpSandboxDeployService.undeploy(
+                            sandboxId,
+                            meta.getMcpName(),
+                            adminUserId,
+                            StrUtil.blankToDefault(param.getNamespace(), "default"));
+                } catch (Exception re) {
+                    log.warn("回滚删除 CRD 失败: {}", re.getMessage());
+                }
+            }
+
+            String errMsg =
+                    e instanceof BusinessException
+                            ? e.getMessage()
+                            : (e.getMessage() != null
+                                    ? e.getMessage()
+                                    : e.getClass().getSimpleName());
+            throw new BusinessException(
+                    ErrorCode.INTERNAL_ERROR, "沙箱预部署失败[" + currentStep + "]: " + errMsg);
+        }
+    }
+
+    /**
+     * 通过 MCP 协议连接 endpoint，调用 tools/list 获取工具列表，保存到 meta.toolsConfig。
+     */
+    private void fetchAndSaveToolsList(
+            McpServerMeta meta, String endpointUrl, String transportType) {
+        try {
+            MCPTransportMode mode =
+                    "http".equalsIgnoreCase(transportType)
+                            ? MCPTransportMode.STREAMABLE_HTTP
+                            : MCPTransportMode.SSE;
+
+            MCPTransportConfig config =
+                    MCPTransportConfig.builder()
+                            .mcpServerName(meta.getMcpName())
+                            .transportMode(mode)
+                            .url(endpointUrl)
+                            .build();
+
+            McpClientWrapper client = toolManager.createClient(config);
+            if (client == null) {
+                log.warn("创建 MCP 客户端失败，跳过工具列表查询: mcpName={}", meta.getMcpName());
+                return;
+            }
+
+            List<McpSchema.Tool> tools = client.listTools().block();
+            if (tools != null && !tools.isEmpty()) {
+                String toolsJson = objectMapper.writeValueAsString(tools);
+                meta.setToolsConfig(toolsJson);
+                metaRepository.save(meta);
+                log.info("自动查询工具列表成功: mcpName={}, toolCount={}", meta.getMcpName(), tools.size());
+            } else {
+                log.info("工具列表为空: mcpName={}", meta.getMcpName());
+            }
+        } catch (Exception e) {
+            // 工具列表查询失败不影响主流程
+            log.warn("自动查询工具列表失败（不影响部署）: mcpName={}, error={}", meta.getMcpName(), e.getMessage());
+        }
+    }
+
+    /**
+     * 与 fetchAndSaveToolsList 相同逻辑，但失败时抛出异常而非吞掉。
+     * 用于管理员预部署流程，需要确保工具列表获取成功。
+     */
+    private void fetchAndSaveToolsListOrThrow(
+            McpServerMeta meta, String endpointUrl, String transportType) {
+        MCPTransportMode mode =
+                "http".equalsIgnoreCase(transportType)
+                        ? MCPTransportMode.STREAMABLE_HTTP
+                        : MCPTransportMode.SSE;
+
+        MCPTransportConfig config =
+                MCPTransportConfig.builder()
+                        .mcpServerName(meta.getMcpName())
+                        .transportMode(mode)
+                        .url(endpointUrl)
+                        .build();
+
+        // 沙箱刚部署完可能还没就绪，最多重试 3 次，每次间隔 20 秒（总计约 60s）
+        McpClientWrapper client = null;
+        int maxRetries = 3;
+        for (int i = 0; i < maxRetries; i++) {
+            client = toolManager.createClient(config);
+            if (client != null) {
+                break;
+            }
+            log.info("MCP 客户端创建失败，等待重试 ({}/{}): mcpName={}", i + 1, maxRetries, meta.getMcpName());
+            try {
+                Thread.sleep(20000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new BusinessException(
+                        ErrorCode.INTERNAL_ERROR, "获取工具列表被中断: mcpName=" + meta.getMcpName());
+            }
+        }
+        if (client == null) {
+            throw new BusinessException(
+                    ErrorCode.INTERNAL_ERROR,
+                    "创建 MCP 客户端失败（已重试 " + maxRetries + " 次）: mcpName=" + meta.getMcpName());
+        }
+
+        List<McpSchema.Tool> tools = client.listTools().block();
+        if (tools != null && !tools.isEmpty()) {
+            try {
+                String toolsJson = objectMapper.writeValueAsString(tools);
+                meta.setToolsConfig(toolsJson);
+            } catch (Exception e) {
+                throw new BusinessException(
+                        ErrorCode.INTERNAL_ERROR, "序列化工具列表失败: " + e.getMessage());
+            }
+            metaRepository.save(meta);
+            log.info("自动查询工具列表成功: mcpName={}, toolCount={}", meta.getMcpName(), tools.size());
+        } else {
+            log.info("工具列表为空: mcpName={}", meta.getMcpName());
+        }
+    }
+
+    /**
      * Upsert endpoint：按 mcpServerId + userId + hostingInstanceId 唯一约束更新或新建。
      */
     private McpServerEndpoint upsertEndpoint(
@@ -1174,6 +1644,53 @@ public class McpServerServiceImpl implements McpServerService {
             return contextHolder.getUser();
         } catch (Exception e) {
             return "open-api";
+        }
+    }
+
+    /**
+     * 从 endpoint 的 subscribeParams JSON 中提取部署时使用的 namespace。
+     * 如果解析失败或不存在，返回 "default"。
+     */
+    private String extractNamespace(McpServerEndpoint endpoint) {
+        if (endpoint == null || StrUtil.isBlank(endpoint.getSubscribeParams())) {
+            return "default";
+        }
+        try {
+            cn.hutool.json.JSONObject params = JSONUtil.parseObj(endpoint.getSubscribeParams());
+            return StrUtil.blankToDefault(params.getStr("namespace"), "default");
+        } catch (Exception e) {
+            return "default";
+        }
+    }
+
+    /**
+     * 对 meta 关联的所有沙箱托管 endpoint 执行 undeploy（删除沙箱中的 CRD 资源）。
+     * undeploy 失败不阻塞删除流程，仅记录日志。
+     */
+    private void undeploySandboxEndpoints(McpServerMeta meta) {
+        List<McpServerEndpoint> endpoints =
+                endpointRepository.findByMcpServerId(meta.getMcpServerId());
+        for (McpServerEndpoint ep : endpoints) {
+            if (!"SANDBOX".equalsIgnoreCase(ep.getHostingType())
+                    || StrUtil.isBlank(ep.getHostingInstanceId())) {
+                continue;
+            }
+            try {
+                String namespace = extractNamespace(ep);
+                mcpSandboxDeployService.undeploy(
+                        ep.getHostingInstanceId(), meta.getMcpName(), ep.getUserId(), namespace);
+                log.info(
+                        "沙箱 undeploy 成功: mcpName={}, sandboxId={}, namespace={}",
+                        meta.getMcpName(),
+                        ep.getHostingInstanceId(),
+                        namespace);
+            } catch (Exception e) {
+                log.warn(
+                        "沙箱 undeploy 失败（不阻塞删除）: mcpName={}, sandboxId={}, error={}",
+                        meta.getMcpName(),
+                        ep.getHostingInstanceId(),
+                        e.getMessage());
+            }
         }
     }
 

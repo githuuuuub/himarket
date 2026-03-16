@@ -37,4 +37,19 @@ public class McpMetaResult implements OutputConverter<McpMetaResult, McpServerMe
     private String createdBy;
     private Boolean sandboxRequired;
     private LocalDateTime createAt;
+
+    /** 沙箱托管后的 endpoint URL（热数据，来自 mcp_server_endpoint） */
+    private String endpointUrl;
+
+    /** endpoint 协议（热数据） */
+    private String endpointProtocol;
+
+    /** endpoint 状态 */
+    private String endpointStatus;
+
+    /** endpoint 的 subscribeParams（包含 namespace、extraParams 等部署参数） */
+    private String subscribeParams;
+
+    /** endpoint 的托管类型（SANDBOX / GATEWAY / NACOS / DIRECT） */
+    private String endpointHostingType;
 }

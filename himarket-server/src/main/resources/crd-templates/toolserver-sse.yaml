@@ -17,7 +17,8 @@ spec:
 ${ACCESSES_YAML}
       artifact:
         repository:
-          image: ${IMAGE}
+          image: >-
+            registry.cn-hangzhou.aliyuncs.com/edas-test-ns/mcp-proxy-server:1.0.1
         type: McpDefinition
       concurrency: 100
       idleTimeoutSeconds: 1800

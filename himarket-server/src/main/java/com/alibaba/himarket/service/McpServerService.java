@@ -86,4 +86,13 @@ public interface McpServerService {
 
     /** 分页查询所有 MCP 元信息 */
     PageResult<McpMetaResult> listAllMeta(Pageable pageable);
+
+    /** 刷新工具列表：连接 endpoint 获取 tools/list，保存到 meta.toolsConfig */
+    McpMetaResult refreshTools(String mcpServerId);
+
+    /** 更新服务介绍 */
+    McpMetaResult updateServiceIntro(String mcpServerId, String serviceIntro);
+
+    /** 管理员手动部署沙箱：为已保存的 MCP 配置部署沙箱 endpoint */
+    McpMetaResult deploySandbox(String mcpServerId, SaveMcpMetaParam param);
 }

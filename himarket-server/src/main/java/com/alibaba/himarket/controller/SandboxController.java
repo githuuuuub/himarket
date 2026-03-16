@@ -84,4 +84,11 @@ public class SandboxController {
     public SandboxResult healthCheck(@PathVariable String sandboxId) {
         return sandboxService.healthCheck(sandboxId);
     }
+
+    @Operation(summary = "获取沙箱集群的 Namespace 列表")
+    @GetMapping("/{sandboxId}/namespaces")
+    @AdminAuth
+    public java.util.List<String> listNamespaces(@PathVariable String sandboxId) {
+        return sandboxService.listNamespaces(sandboxId);
+    }
 }
