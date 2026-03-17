@@ -171,7 +171,7 @@ export function ChatArea(props: ChatAreaProps) {
     addedMcpsRef.current = []
   }, [])
 
-  const handleQuickSubscribe = useCallback((product: IProductDetail) => {
+  const handleQuickSubscribe = useCallback((_product: IProductDetail) => {
     if (!primaryConsumer.current) return;
     // 弹窗内已完成产品订阅，这里只刷新订阅列表
     APIs.getConsumerSubscriptions(primaryConsumer.current.consumerId, { size: 1000 })
