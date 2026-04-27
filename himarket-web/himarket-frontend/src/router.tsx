@@ -1,4 +1,10 @@
-import { Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
+import {
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import { useEffect } from "react";
 import ApiDetail from "./pages/ApiDetail";
 import Consumers from "./pages/Consumers";
@@ -20,6 +26,10 @@ import Chat from "./pages/Chat";
 import Coding from "./pages/Coding";
 import SkillDetail from "./pages/SkillDetail";
 import WorkerDetail from "./pages/WorkerDetail";
+import AssetList from "./pages/PersonalCenter/AssetList";
+import CreateAsset from "./pages/PersonalCenter/CreateAsset";
+import AssetDetail from "./pages/PersonalCenter/AssetDetail";
+import EditAsset from "./pages/PersonalCenter/EditAsset";
 import { RequireAuth } from "./components/RequireAuth";
 import { usePortalConfig } from "./context/PortalConfigContext";
 
@@ -66,8 +76,22 @@ export function Router() {
         <Route path="/" element={<DynamicHome />} />
         <Route path="/models" element={<Square activeType="MODEL_API" />} />
         <Route path="/mcp" element={<McpSquare />} />
-        <Route path="/mcp/my" element={<RequireAuth><MyMcp /></RequireAuth>} />
-        <Route path="/mcp/create" element={<RequireAuth><McpCreatePage /></RequireAuth>} />
+        <Route
+          path="/mcp/my"
+          element={
+            <RequireAuth>
+              <MyMcp />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/mcp/create"
+          element={
+            <RequireAuth>
+              <McpCreatePage />
+            </RequireAuth>
+          }
+        />
         <Route path="/agents" element={<Square activeType="AGENT_API" />} />
         <Route path="/apis" element={<Square activeType="REST_API" />} />
         <Route path="/skills" element={<Square activeType="AGENT_SKILL" />} />
@@ -79,16 +103,69 @@ export function Router() {
         <Route path="/coding" element={<Coding />} />
         <Route path="/getting-started" element={<GettingStarted />} />
         <Route path="/apis/:apiProductId" element={<ApiDetail />} />
-        <Route path="/consumers/:consumerId" element={<RequireAuth><ConsumerDetail /></RequireAuth>} />
-        <Route path="/consumers" element={<RequireAuth><Consumers /></RequireAuth>} />
+        <Route
+          path="/consumers/:consumerId"
+          element={
+            <RequireAuth>
+              <ConsumerDetail />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/consumers"
+          element={
+            <RequireAuth>
+              <Consumers />
+            </RequireAuth>
+          }
+        />
         <Route path="/mcp/:mcpProductId" element={<McpDetail />} />
         <Route path="/agents/:agentProductId" element={<AgentDetail />} />
         <Route path="/models/:modelProductId" element={<ModelDetail />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
-        <Route path="/profile" element={<RequireAuth><Profile /></RequireAuth>} />
+        <Route
+          path="/profile"
+          element={
+            <RequireAuth>
+              <Profile />
+            </RequireAuth>
+          }
+        />
         <Route path="/callback" element={<Callback />} />
         <Route path="/oidc/callback" element={<OidcCallback />} />
+        <Route
+          path="/personal-center"
+          element={
+            <RequireAuth>
+              <AssetList />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/personal-center/create"
+          element={
+            <RequireAuth>
+              <CreateAsset />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/personal-center/:assetId"
+          element={
+            <RequireAuth>
+              <AssetDetail />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/personal-center/:assetId/edit"
+          element={
+            <RequireAuth>
+              <EditAsset />
+            </RequireAuth>
+          }
+        />
 
         {/* 其他页面可继续添加 */}
       </Routes>

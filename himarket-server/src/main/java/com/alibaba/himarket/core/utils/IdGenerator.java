@@ -54,6 +54,7 @@ public class IdGenerator {
     private static final String PUBLICATION_PREFIX = "publication-";
     private static final String MCP_SERVER_PREFIX = "mcp-";
     private static final String ENDPOINT_PREFIX = "ep-";
+    private static final String ASSET_PREFIX = "asset-";
 
     public static String genHigressGatewayId() {
         return HIGRESS_PREFIX + ObjectId.next();
@@ -121,5 +122,9 @@ public class IdGenerator {
 
     public static String genEndpointId() {
         return ENDPOINT_PREFIX + ObjectId.next();
+    }
+
+    public static String genAssetId() {
+        return ASSET_PREFIX + ObjectId.next();
     }
 }

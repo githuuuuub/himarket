@@ -15,6 +15,7 @@ import {
   ThunderboltOutlined,
   RobotOutlined,
   ApiOutlined,
+  AuditOutlined,
 } from "@ant-design/icons";
 import McpServerIcon from "@/components/icons/McpServerIcon";
 import { Button, Tooltip } from "antd";
@@ -52,9 +53,19 @@ const Layout: React.FC = () => {
 
   useEffect(() => {
     // 进入详情页自动折叠侧边栏（排除 API Products 子菜单路由）
-    const apiProductSubRoutes = ['model-api', 'mcp-server', 'agent-skill', 'worker', 'agent-api', 'rest-api'];
-    const isApiProductDetail = location.pathname.match(/^\/api-products\/([^/]+)$/);
-    const isSubMenuRoute = isApiProductDetail && apiProductSubRoutes.includes(isApiProductDetail[1]);
+    const apiProductSubRoutes = [
+      "model-api",
+      "mcp-server",
+      "agent-skill",
+      "worker",
+      "agent-api",
+      "rest-api",
+    ];
+    const isApiProductDetail = location.pathname.match(
+      /^\/api-products\/([^/]+)$/
+    );
+    const isSubMenuRoute =
+      isApiProductDetail && apiProductSubRoutes.includes(isApiProductDetail[1]);
 
     if (
       location.pathname.match(/^\/portals\/[^/]+$/) ||
@@ -74,12 +85,42 @@ const Layout: React.FC = () => {
       href: "/api-products",
       icon: ProductOutlined,
       children: [
-        { name: "Model API", cn: "Model API", href: "/api-products/model-api", icon: BulbOutlined },
-        { name: "MCP Server", cn: "MCP Server", href: "/api-products/mcp-server", icon: McpServerIcon },
-        { name: "Agent Skill", cn: "Agent Skill", href: "/api-products/agent-skill", icon: ThunderboltOutlined },
-        { name: "Worker", cn: "Worker", href: "/api-products/worker", icon: UserOutlined },
-        { name: "Agent API", cn: "Agent API", href: "/api-products/agent-api", icon: RobotOutlined },
-        { name: "REST API", cn: "REST API", href: "/api-products/rest-api", icon: ApiOutlined },
+        {
+          name: "Model API",
+          cn: "Model API",
+          href: "/api-products/model-api",
+          icon: BulbOutlined,
+        },
+        {
+          name: "MCP Server",
+          cn: "MCP Server",
+          href: "/api-products/mcp-server",
+          icon: McpServerIcon,
+        },
+        {
+          name: "Agent Skill",
+          cn: "Agent Skill",
+          href: "/api-products/agent-skill",
+          icon: ThunderboltOutlined,
+        },
+        {
+          name: "Worker",
+          cn: "Worker",
+          href: "/api-products/worker",
+          icon: UserOutlined,
+        },
+        {
+          name: "Agent API",
+          cn: "Agent API",
+          href: "/api-products/agent-api",
+          icon: RobotOutlined,
+        },
+        {
+          name: "REST API",
+          cn: "REST API",
+          href: "/api-products/rest-api",
+          icon: ApiOutlined,
+        },
       ],
     },
     {
@@ -89,15 +130,36 @@ const Layout: React.FC = () => {
       icon: TagsOutlined,
     },
     {
+      name: "Asset Review",
+      cn: "资产审核",
+      href: "/asset-reviews",
+      icon: AuditOutlined,
+    },
+    {
       name: "实例管理",
       cn: "实例管理",
       href: "/consoles",
       icon: SettingOutlined,
       children: [
-        { name: 'Nacos实例', cn: 'Nacos实例', href: '/consoles/nacos', icon: DesktopOutlined },
-        { name: '网关实例', cn: '网关实例', href: '/consoles/gateway', icon: DesktopOutlined },
-        { name: 'Sandbox实例', cn: 'Sandbox实例', href: '/consoles/sandbox', icon: DesktopOutlined },
-      ]
+        {
+          name: "Nacos实例",
+          cn: "Nacos实例",
+          href: "/consoles/nacos",
+          icon: DesktopOutlined,
+        },
+        {
+          name: "网关实例",
+          cn: "网关实例",
+          href: "/consoles/gateway",
+          icon: DesktopOutlined,
+        },
+        {
+          name: "Sandbox实例",
+          cn: "Sandbox实例",
+          href: "/consoles/sandbox",
+          icon: DesktopOutlined,
+        },
+      ],
     },
     {
       name: "观测分析",
@@ -135,7 +197,10 @@ const Layout: React.FC = () => {
     if (item.children) {
       return item.children.some(child => location.pathname === child.href);
     }
-    return location.pathname === item.href || location.pathname.startsWith(item.href + '/');
+    return (
+      location.pathname === item.href ||
+      location.pathname.startsWith(item.href + "/")
+    );
   };
 
   const renderMenuItem = (item: NavigationItem, level: number = 0) => {

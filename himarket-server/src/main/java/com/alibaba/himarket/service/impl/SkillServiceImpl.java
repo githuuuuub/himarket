@@ -679,6 +679,12 @@ public class SkillServiceImpl implements SkillService {
         return execute(nacosId, s -> s.uploadSkillFromZip(namespace, zipBytes));
     }
 
+    @Override
+    public String uploadSkillFromZip(
+            String nacosId, String namespace, byte[] zipBytes, boolean overwrite) {
+        return execute(nacosId, s -> s.uploadSkillFromZip(namespace, zipBytes, overwrite));
+    }
+
     /**
      * Fetches Skill from Nacos.
      *

@@ -39,6 +39,9 @@ public enum ErrorCode {
     /** Unauthorized */
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "认证失败：{}"),
 
+    /** Forbidden */
+    FORBIDDEN(HttpStatus.FORBIDDEN, "权限不足：{}"),
+
     /** Resource not found */
     NOT_FOUND(HttpStatus.NOT_FOUND, "资源不存在：{}:{}"),
 

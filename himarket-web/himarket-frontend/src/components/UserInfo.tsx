@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { Button, Avatar, Dropdown, Skeleton, message } from "antd";
 import { useNavigate } from "react-router-dom";
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from "react-i18next";
 import { LogOut, UserRoundCheck } from "./icon";
+import { AppstoreOutlined } from "@ant-design/icons";
 import APIs from "../lib/apis";
 import "./UserInfo.css";
 
@@ -17,7 +18,7 @@ let globalUserInfo: UserInfo | null = null;
 let globalLoading = false;
 
 export function UserInfo() {
-  const { t } = useTranslation('userInfo');
+  const { t } = useTranslation("userInfo");
   const [userInfo, setUserInfo] = useState<UserInfo | null>(globalUserInfo);
   const [loading, setLoading] = useState(globalUserInfo ? false : true);
   const navigate = useNavigate();
@@ -53,11 +54,11 @@ export function UserInfo() {
     setLoading(true);
 
     APIs.getDeveloperInfo()
-      .then((response) => {
+      .then(response => {
         const data = response.data;
         if (data && data.username) {
           const userData = {
-            displayName: data.username || data.email || t('unnamedUser'),
+            displayName: data.username || data.email || t("unnamedUser"),
             email: data.email,
             avatar: data.avatarUrl || undefined,
           };
@@ -85,27 +86,29 @@ export function UserInfo() {
       await APIs.developerLogout();
     } catch (error) {
       // 即使接口调用失败，也要清除本地token，避免用户被卡住
-      console.error('退出登录接口调用失败:', error);
+      console.error("退出登录接口调用失败:", error);
     } finally {
       // 清除localStorage中的token
-      localStorage.removeItem('access_token');
+      localStorage.removeItem("access_token");
       // 清除全局用户信息
       globalUserInfo = null;
       globalLoading = false;
       setUserInfo(null);
       // 显示成功消息
-      message.success(t('logoutSuccess'), 1);
+      message.success(t("logoutSuccess"), 1);
       // 跳转到登录页
-      navigate('/login');
+      navigate("/login");
     }
   };
 
   const menuItems = [
     {
-      key: 'user-info',
+      key: "user-info",
       label: (
         <div>
-          <div className="font-semibold text-gray-900 text-base">{userInfo?.displayName}</div>
+          <div className="font-semibold text-gray-900 text-base">
+            {userInfo?.displayName}
+          </div>
           {userInfo?.email && (
             <div className="text-xs text-gray-500 mt-0.5">{userInfo.email}</div>
           )}
@@ -114,28 +117,34 @@ export function UserInfo() {
       disabled: true,
     },
     {
-      type: 'divider' as const,
+      type: "divider" as const,
     },
     {
-      key: 'my-applications',
+      key: "my-applications",
       icon: <UserRoundCheck className="mr-1" />,
-      label: t('consumerManagement'),
-      onClick: () => navigate('/consumers'),
+      label: t("consumerManagement"),
+      onClick: () => navigate("/consumers"),
     },
     {
-      type: 'divider' as const,
+      key: "personal-center",
+      icon: <AppstoreOutlined className="mr-1" />,
+      label: "个人中心",
+      onClick: () => navigate("/personal-center"),
     },
     {
-      key: 'logout',
+      type: "divider" as const,
+    },
+    {
+      key: "logout",
       icon: <LogOut className="mr-1" />,
-      label: t('logout'),
+      label: t("logout"),
       onClick: handleLogout,
     },
   ];
 
   // 获取用户名首字母
   const getInitials = (name: string) => {
-    if (!name) return 'U';
+    if (!name) return "U";
     // 如果是中文名，取第一个字
     if (/[\u4e00-\u9fa5]/.test(name)) {
       return name.charAt(0);
@@ -157,16 +166,19 @@ export function UserInfo() {
       <Dropdown
         menu={{ items: menuItems }}
         placement="bottomRight"
-        trigger={['hover']}
+        trigger={["hover"]}
         classNames={{
-          root: "user-dropdown"
+          root: "user-dropdown",
         }}
       >
         <div className="flex items-center space-x-2 cursor-pointer hover:opacity-80 transition-opacity px-2 py-1 rounded-full">
           {userInfo.avatar ? (
             <Avatar src={userInfo.avatar} size="default" />
           ) : (
-            <Avatar size="default" className="bg-colorPrimarySecondary text-mainTitle font-medium">
+            <Avatar
+              size="default"
+              className="bg-colorPrimarySecondary text-mainTitle font-medium"
+            >
               {getInitials(userInfo.displayName)}
             </Avatar>
           )}
@@ -183,7 +195,7 @@ export function UserInfo() {
       type="text"
       className="rounded-full bg-colorPrimary text-white border-none hover:opacity-90 hover:bg-colorPrimary"
     >
-      {t('login')}
+      {t("login")}
     </Button>
   );
 }

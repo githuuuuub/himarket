@@ -12,6 +12,8 @@ import Login from "@/pages/Login";
 import ModelDashboard from "@/pages/ModelDashboard";
 import McpMonitor from "@/pages/McpMonitor";
 import SandboxConsoles from "@/pages/SandboxConsoles";
+import ReviewList from "@/pages/AssetReview/ReviewList";
+import ReviewDetail from "@/pages/AssetReview/ReviewDetail";
 
 export const router = createBrowserRouter([
   {
@@ -92,11 +94,11 @@ export const router = createBrowserRouter([
         element: <NacosConsoles />,
       },
       {
-        path: 'consoles/sandbox',
+        path: "consoles/sandbox",
         element: <SandboxConsoles />,
       },
       {
-        path: 'observability',
+        path: "observability",
         element: <Navigate to="/observability/model-dashboard" replace />,
       },
       {
@@ -106,6 +108,14 @@ export const router = createBrowserRouter([
       {
         path: "observability/mcp-monitor",
         element: <McpMonitor />,
+      },
+      {
+        path: "asset-reviews",
+        element: <ReviewList />,
+      },
+      {
+        path: "asset-reviews/:assetId",
+        element: <ReviewDetail />,
       },
       {
         path: "*",

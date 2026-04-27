@@ -150,6 +150,17 @@ public interface SkillService {
     String uploadSkillFromZip(String nacosId, String namespace, byte[] zipBytes);
 
     /**
+     * Uploads a Skill from ZIP via SDK uploadSkillFromZip() with overwrite option.
+     *
+     * @param nacosId   Nacos instance ID
+     * @param namespace Nacos namespace
+     * @param zipBytes  raw ZIP bytes
+     * @param overwrite whether to overwrite existing working version
+     * @return the created skill name
+     */
+    String uploadSkillFromZip(String nacosId, String namespace, byte[] zipBytes, boolean overwrite);
+
+    /**
      * Gets CLI download info for the frontend detail page.
      *
      * @param productId the product identifier
